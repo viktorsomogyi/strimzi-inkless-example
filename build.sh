@@ -166,6 +166,7 @@ function install_postgres() {
 function install_strimzi() {
   helm install strimzi-operator strimzi/strimzi-kafka-operator \
     --namespace strimzi \
+    --create-namespace \
     --set "watchNamespaces={strimzi,kafka}"
 
   sudo apt-get install -y make wget maven shellcheck
