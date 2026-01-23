@@ -43,11 +43,11 @@ Before running the build script, ensure you have:
 - **Java 21**: Required for building Strimzi
 - **Git**: For cloning repositories
 - **Maven**: For building Strimzi
-- **Kubernetes cluster**: The script installs K3s if not present, but you can use any Kubernetes cluster
+- **Kubernetes cluster**: K3s will be installed if not present, but you can use any Kubernetes cluster
 
 ### Quick Setup (Debian/Ubuntu)
 
-For Debian Bookworm systems, use the provided setup script:
+For Google Cloud Debian Bookworm systems, use the provided setup script:
 
 ```bash
 ./setup_debian_bookworm.sh
@@ -60,28 +60,56 @@ This script installs:
 
 ## Installation
 
-### Basic Installation
+The installation process is split into two steps:
 
-Run the build script to set up the entire stack:
+### Step 1: Setup K3s and Helm
+
+First, set up your Kubernetes cluster (K3s) and Helm:
+
+```bash
+./setup_k3s.sh
+```
+
+This script will:
+1. Install K3s (if not already running)
+2. Configure KUBECONFIG environment variable (sets it to `/etc/rancher/k3s/k3s.yaml`)
+3. Install Helm (if not already installed)
+4. Wait for Traefik (K3s default ingress controller) to be ready
+
+**Note**: 
+- If K3s is already installed and running, this script will skip installation and only configure Helm and KUBECONFIG
+- The KUBECONFIG export is added to your `~/.bashrc` for persistence across sessions
+- You may need to source `~/.bashrc` or start a new terminal session after running this script
+
+### Step 2: Deploy the Stack
+
+Once K3s and Helm are set up, run the main build script:
 
 ```bash
 ./build.sh
 ```
 
 This will:
-1. Install and configure K3s (if not already present)
-2. Install Helm and required repositories
-3. Deploy MinIO for S3 storage
-4. Deploy PostgreSQL for Inkless control plane
-5. Deploy Prometheus and Grafana monitoring stack
-6. Build Strimzi with Inkless Kafka integration
-7. Deploy the Kafka cluster with autoscaling
+1. Verify prerequisites (Java 21, Docker, Git)
+2. Check if K3s is running (installs it as a fallback if not present)
+3. Add required Helm repositories (Strimzi, MinIO, Prometheus, Bitnami)
+4. Deploy MinIO for S3 storage
+5. Deploy PostgreSQL for Inkless control plane
+6. Deploy Prometheus and Grafana monitoring stack
+7. Build Strimzi with Inkless Kafka integration
+8. Deploy the Kafka cluster with autoscaling
+
+**Note**: The `build.sh` script includes fallback K3s installation logic, but it's recommended to run `setup_k3s.sh` first to ensure proper KUBECONFIG configuration.
 
 ### Installation with HTTPS Access (Google Cloud)
 
 If you're running on Google Cloud and want HTTPS access to Grafana:
 
 ```bash
+# Step 1: Setup K3s and Helm
+./setup_k3s.sh
+
+# Step 2: Deploy with HTTPS
 ./build.sh <YOUR_IP_ADDRESS> <YOUR_EMAIL_ADDRESS>
 ```
 
@@ -94,7 +122,8 @@ This will:
 
 ```
 .
-├── build.sh                      # Main installation script
+├── build.sh                      # Main installation script (deploys all components)
+├── setup_k3s.sh                  # K3s and Helm setup script
 ├── setup_debian_bookworm.sh      # Debian/Ubuntu prerequisites setup
 ├── kafka.yaml                    # Kafka cluster configuration
 ├── hpa.yaml                      # Horizontal Pod Autoscaler configuration
@@ -192,6 +221,16 @@ The monitoring stack collects:
 3. **Rebalancing**: Cruise Control is configured with auto-rebalance templates that handle both scale-up (add-brokers) and scale-down (remove-brokers) scenarios automatically.
 
 ## Troubleshooting
+
+### KUBECONFIG Not Set
+
+If you encounter `kubectl` or `helm` commands failing with connection errors, ensure KUBECONFIG is set:
+
+```bash
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+```
+
+Or run `setup_k3s.sh` which will configure this automatically.
 
 ### Check Kafka Cluster Status
 ```bash
