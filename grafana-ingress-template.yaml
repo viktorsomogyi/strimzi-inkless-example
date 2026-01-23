@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-ingress
+  namespace: monitoring
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: "letsencrypt-prod" # Matches your ClusterIssuer
+spec:
+  tls:
+  - hosts:
+    - grafana.__IP_ADDRESS__.nip.io
+    secretName: grafana-tls
+  rules:
+  - host: grafana.__IP_ADDRESS__.nip.io
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: prometheus-stack-grafana
+            port:
+              number: 80

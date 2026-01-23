@@ -1,0 +1,308 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: controller-pool
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: inkless-cluster
+spec:
+  replicas: 3
+  roles: ["controller"]
+  storage:
+    type: ephemeral
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: broker-pool
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: inkless-cluster
+spec:
+  roles: ["broker"]
+  replicas: 3
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: 500m
+    limits:
+      memory: 2Gi
+      cpu: "1"
+  storage:
+    type: ephemeral
+
+---
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: inkless-cluster
+  namespace: kafka
+  annotations:
+    strimzi.io/kraft: enabled
+    strimzi.io/node-pools: enabled
+spec:
+  kafka:
+    version: 4.0.0
+    image: strimzi/kafka:build-kafka-4.0.0
+    metadataVersion: 4.0-IV0
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal # traffic inside the cluster
+        tls: false
+      - name: external
+        port: 9094
+        type: nodeport # Traffic from your external clients
+        tls: false
+        configuration:
+          bootstrap:
+            nodePort: 32094 # The port for the initial connection
+    config:
+      cruise.control.metrics.reporter.metrics.reporting.interval.ms: 5000
+      cruise.control.metrics.reporter.metadata.max.age.ms: 5000
+      diskless.storage.system.enable: true
+      log.diskless.enable: false
+      inkless.control.plane.class: io.aiven.inkless.control_plane.postgres.PostgresControlPlane
+      inkless.control.plane.connection.string: jdbc:postgresql://inkless-postgres-postgresql:5432/inkless-db
+      inkless.control.plane.username: inkless-username
+      inkless.control.plane.password: mysecretpassword
+      inkless.storage.backend.class: io.aiven.inkless.storage_backend.s3.S3Storage
+      inkless.storage.s3.bucket.name: inkless-bucket
+      inkless.storage.s3.region: us-west-1
+      inkless.storage.s3.endpoint.url: http://minio.minio.svc.cluster.local:9000
+      inkless.storage.s3.path.style.access.enabled: true
+      inkless.storage.aws.access.key.id: admin
+      inkless.storage.aws.secret.access.key: password123
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics
+          key: kafka-metrics-config.yml
+  cruiseControl:
+    brokerCapacity:
+      cpu: "500m"
+      inboundNetwork: "10000KiB/s"
+      outboundNetwork: "10000KiB/s"
+    resources:
+      requests:
+        memory: 1Gi
+        cpu: 500m
+      limits:
+        memory: 1Gi
+        cpu: 1000m
+    config:
+      max.active.user.tasks: 10
+      metric.sampling.interval.ms: 5000
+      metadata.max.age.ms: 5000
+      skip.sample.store.topic.rack.awareness.check: true
+      partition.metrics.window.ms: 10000
+      broker.metrics.window.ms: 10000
+      monitor.state.update.interval.ms: 10000
+      cruise.control.metrics.reporter.metrics.reporting.interval.ms: 5000
+      # Set this to match or be slightly lower than your HPA target
+      cpu.capacity.threshold: "0.2"
+      cpu.usage.distribution.threshold: "1.2"
+      # Ensures CC prioritizes moving replicas to empty brokers
+      replica.count.balance.threshold: "1.1"
+      partition.metrics.window.ms: 30000
+      broker.metrics.window.ms: 30000
+      num.partition.metrics.windows: 1
+      num.broker.metrics.windows: 3
+    autoRebalance:
+      - mode: add-brokers
+        template:
+          name: diskless-rebalance-template
+      - mode: remove-brokers
+        template:
+          name: diskless-rebalance-template
+  entityOperator:
+    topicOperator:
+      resources:
+        requests:
+          memory: 256Mi
+          cpu: "0.2"
+        limits:
+          memory: 256Mi
+          cpu: "0.5"
+    userOperator:
+      resources:
+        requests:
+          memory: 512Mi
+          cpu: "0.2"
+        limits:
+          memory: 512Mi
+          cpu: "0.5"
+  kafkaExporter:
+    topicRegex: ".*"
+    groupRegex: ".*"
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: kafka-metrics
+  labels:
+    app: strimzi
+data:
+  kafka-metrics-config.yml: |
+    # See https://github.com/prometheus/jmx_exporter for more info about JMX Prometheus Exporter metrics
+    lowercaseOutputName: true
+    rules:
+    # Special cases and very specific rules
+    - pattern: kafka.server<type=(.+), name=(.+), clientId=(.+), topic=(.+), partition=(.*)><>Value
+      name: kafka_server_$1_$2
+      type: GAUGE
+      labels:
+        clientId: "$3"
+        topic: "$4"
+        partition: "$5"
+    - pattern: kafka.server<type=(.+), name=(.+), clientId=(.+), brokerHost=(.+), brokerPort=(.+)><>Value
+      name: kafka_server_$1_$2
+      type: GAUGE
+      labels:
+        clientId: "$3"
+        broker: "$4:$5"
+    - pattern: kafka.server<type=(.+), cipher=(.+), protocol=(.+), listener=(.+), networkProcessor=(.+)><>connections
+      name: kafka_server_$1_connections_tls_info
+      type: GAUGE
+      labels:
+        cipher: "$2"
+        protocol: "$3"
+        listener: "$4"
+        networkProcessor: "$5"
+    - pattern: kafka.server<type=(.+), clientSoftwareName=(.+), clientSoftwareVersion=(.+), listener=(.+), networkProcessor=(.+)><>connections
+      name: kafka_server_$1_connections_software
+      type: GAUGE
+      labels:
+        clientSoftwareName: "$2"
+        clientSoftwareVersion: "$3"
+        listener: "$4"
+        networkProcessor: "$5"
+    - pattern: "kafka.server<type=(.+), listener=(.+), networkProcessor=(.+)><>(.+-total):"
+      name: kafka_server_$1_$4
+      type: COUNTER
+      labels:
+        listener: "$2"
+        networkProcessor: "$3"
+    - pattern: "kafka.server<type=(.+), listener=(.+), networkProcessor=(.+)><>(.+):"
+      name: kafka_server_$1_$4
+      type: GAUGE
+      labels:
+        listener: "$2"
+        networkProcessor: "$3"
+    - pattern: kafka.server<type=(.+), listener=(.+), networkProcessor=(.+)><>(.+-total)
+      name: kafka_server_$1_$4
+      type: COUNTER
+      labels:
+        listener: "$2"
+        networkProcessor: "$3"
+    - pattern: kafka.server<type=(.+), listener=(.+), networkProcessor=(.+)><>(.+)
+      name: kafka_server_$1_$4
+      type: GAUGE
+      labels:
+        listener: "$2"
+        networkProcessor: "$3"
+    # Some percent metrics use MeanRate attribute
+    # Ex) kafka.server<type=(KafkaRequestHandlerPool), name=(RequestHandlerAvgIdlePercent)><>MeanRate
+    - pattern: kafka.(\w+)<type=(.+), name=(.+)Percent\w*><>MeanRate
+      name: kafka_$1_$2_$3_percent
+      type: GAUGE
+    # Generic gauges for percents
+    - pattern: kafka.(\w+)<type=(.+), name=(.+)Percent\w*><>Value
+      name: kafka_$1_$2_$3_percent
+      type: GAUGE
+    - pattern: kafka.(\w+)<type=(.+), name=(.+)Percent\w*, (.+)=(.+)><>Value
+      name: kafka_$1_$2_$3_percent
+      type: GAUGE
+      labels:
+        "$4": "$5"
+    # Generic per-second counters with 0-2 key/value pairs
+    - pattern: kafka.(\w+)<type=(.+), name=(.+)PerSec\w*, (.+)=(.+), (.+)=(.+)><>Count
+      name: kafka_$1_$2_$3_total
+      type: COUNTER
+      labels:
+        "$4": "$5"
+        "$6": "$7"
+    - pattern: kafka.(\w+)<type=(.+), name=(.+)PerSec\w*, (.+)=(.+)><>Count
+      name: kafka_$1_$2_$3_total
+      type: COUNTER
+      labels:
+        "$4": "$5"
+    - pattern: kafka.(\w+)<type=(.+), name=(.+)PerSec\w*><>Count
+      name: kafka_$1_$2_$3_total
+      type: COUNTER
+    # Generic gauges with 0-2 key/value pairs
+    - pattern: kafka.(\w+)<type=(.+), name=(.+), (.+)=(.+), (.+)=(.+)><>Value
+      name: kafka_$1_$2_$3
+      type: GAUGE
+      labels:
+        "$4": "$5"
+        "$6": "$7"
+    - pattern: kafka.(\w+)<type=(.+), name=(.+), (.+)=(.+)><>Value
+      name: kafka_$1_$2_$3
+      type: GAUGE
+      labels:
+        "$4": "$5"
+    - pattern: kafka.(\w+)<type=(.+), name=(.+)><>Value
+      name: kafka_$1_$2_$3
+      type: GAUGE
+    # Emulate Prometheus 'Summary' metrics for the exported 'Histogram's.
+    # Note that these are missing the '_sum' metric!
+    - pattern: kafka.(\w+)<type=(.+), name=(.+), (.+)=(.+), (.+)=(.+)><>Count
+      name: kafka_$1_$2_$3_count
+      type: COUNTER
+      labels:
+        "$4": "$5"
+        "$6": "$7"
+    - pattern: kafka.(\w+)<type=(.+), name=(.+), (.+)=(.*), (.+)=(.+)><>(\d+)thPercentile
+      name: kafka_$1_$2_$3
+      type: GAUGE
+      labels:
+        "$4": "$5"
+        "$6": "$7"
+        quantile: "0.$8"
+    - pattern: kafka.(\w+)<type=(.+), name=(.+), (.+)=(.+)><>Count
+      name: kafka_$1_$2_$3_count
+      type: COUNTER
+      labels:
+        "$4": "$5"
+    - pattern: kafka.(\w+)<type=(.+), name=(.+), (.+)=(.*)><>(\d+)thPercentile
+      name: kafka_$1_$2_$3
+      type: GAUGE
+      labels:
+        "$4": "$5"
+        quantile: "0.$6"
+    - pattern: kafka.(\w+)<type=(.+), name=(.+)><>Count
+      name: kafka_$1_$2_$3_count
+      type: COUNTER
+    - pattern: kafka.(\w+)<type=(.+), name=(.+)><>(\d+)thPercentile
+      name: kafka_$1_$2_$3
+      type: GAUGE
+      labels:
+        quantile: "0.$4"
+    # KRaft overall related metrics
+    # distinguish between always increasing COUNTER (total and max) and variable GAUGE (all others) metrics
+    - pattern: "kafka.server<type=raft-metrics><>(.+-total|.+-max):"
+      name: kafka_server_raftmetrics_$1
+      type: COUNTER
+    - pattern: "kafka.server<type=raft-metrics><>(current-state): (.+)"
+      name: kafka_server_raftmetrics_$1
+      value: 1
+      type: UNTYPED
+      labels:
+        $1: "$2"
+    - pattern: "kafka.server<type=raft-metrics><>(.+):"
+      name: kafka_server_raftmetrics_$1
+      type: GAUGE
+    # KRaft "low level" channels related metrics
+    # distinguish between always increasing COUNTER (total and max) and variable GAUGE (all others) metrics
+    - pattern: "kafka.server<type=raft-channel-metrics><>(.+-total|.+-max):"
+      name: kafka_server_raftchannelmetrics_$1
+      type: COUNTER
+    - pattern: "kafka.server<type=raft-channel-metrics><>(.+):"
+      name: kafka_server_raftchannelmetrics_$1
+      type: GAUGE
+    # Broker metrics related to fetching metadata topic records in KRaft mode
+    - pattern: "kafka.server<type=broker-metadata-metrics><>(.+):"
+      name: kafka_server_brokermetadatametrics_$1
+      type: GAUGE

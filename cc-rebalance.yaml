@@ -1,0 +1,21 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaRebalance
+metadata:
+  name: diskless-rebalance-template
+  annotations:
+    strimzi.io/rebalance-template: "true" # specifies that this KafkaRebalance is a rebalance configuration template
+spec:
+  # Docs:
+  #   https://strimzi.io/docs/operators/latest/configuring.html#type-KafkaRebalance-reference
+  #   https://strimzi.io/blog/2024/11/25/autorebalancing-on-scaling/
+  # NOTE: mode and brokers fields, if set, will be just ignored because they are
+  #       automatically set on the corresponding KafkaRebalance by the operator
+  goals:
+    - CpuCapacityGoal
+    - NetworkInboundCapacityGoal
+    - DiskCapacityGoal
+    - RackAwareGoal
+    - MinTopicLeadersPerBrokerGoal
+    - NetworkOutboundCapacityGoal
+    - ReplicaCapacityGoal
+  skipHardGoalCheck: true

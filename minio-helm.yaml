@@ -1,0 +1,16 @@
+mode: standalone
+
+persistence:
+  enabled: true
+  storageClass: "minio-local-storage"
+  size: 50Gi
+
+resources:
+  requests:
+    memory: 512Mi
+
+rootUser: "admin"
+rootPassword: "password123" # Change this for production!
+
+service:
+  type: ClusterIP

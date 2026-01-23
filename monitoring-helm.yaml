@@ -1,0 +1,11 @@
+prometheus:
+  service:
+    podMonitorNamespaceSelector: {}
+grafana:
+  service:
+    additionalDataSources:
+    - name: Prometheus
+      type: prometheus
+      url: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
+      access: proxy
+      isDefault: true
