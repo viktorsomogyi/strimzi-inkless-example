@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -x
-
 SCRIPT_DIR=`pwd`
 
 JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
@@ -202,8 +200,16 @@ function install_strimzi() {
   sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
   sudo chmod +x /usr/local/bin/yq
 
-  git clone https://github.com/strimzi/strimzi-kafka-operator.git
-  cd strimzi-kafka-operator
+  STRIMZI_DIR="/tmp/strimzi-kafka-operator"
+
+  if [ ! -d "$STRIMZI_DIR" ]; then
+    echo "Cloning Strimzi Kafka Operator into $STRIMZI_DIR ..."
+    git clone https://github.com/strimzi/strimzi-kafka-operator.git "$STRIMZI_DIR"
+  fi
+
+  cd "$STRIMZI_DIR"
+  git checkout inkless-compat
+
   cat << EOF > kafka-versions.yaml
  - version: 4.0.0
    metadata: 4.0
@@ -214,21 +220,19 @@ function install_strimzi() {
    default: false
 EOF
 
-  if [ ! -d strimzi-kafka-operator ]; then
-    git clone https://github.com/viktorsomogyi/strimzi-kafka-operator.git
-  fi
-  cd strimzi-kafka-operator/
-  git checkout inkless-compat
-
+  echo "Building Strimzi Kafka Operator..."
   make MVN_ARGS='-DskipTests' all
   cd docker-images/artifacts
+  echo "Building Strimzi Kafka image..."
   ./build.sh
+  echo "Importing Strimzi Kafka image into K3s..."
   cd ../../
   make docker_build
 
   docker save strimzi/kafka:build-kafka-4.0.0 | sudo k3s ctr images import -
 
   echo "Installed Strimzi"
+  cd $SCRIPT_DIR
 }
 
 function install_kafka() {
