@@ -164,9 +164,11 @@ function install_postgres() {
 
 # Install Strimzi, then build it to compile the Inkless Kafka image
 function install_strimzi() {
+  kubectl create namespace strimzi
+  kubectl create namespace kafka
+
   helm install strimzi-operator strimzi/strimzi-kafka-operator \
     --namespace strimzi \
-    --create-namespace \
     --set "watchNamespaces={strimzi,kafka}"
 
   sudo apt-get install -y make wget maven shellcheck
