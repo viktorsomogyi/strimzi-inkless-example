@@ -166,10 +166,6 @@ function install_strimzi() {
   kubectl create namespace strimzi
   kubectl create namespace kafka
 
-  helm install strimzi-operator strimzi/strimzi-kafka-operator \
-    --namespace strimzi \
-    --set "watchNamespaces={strimzi,kafka}"
-
   sudo apt-get install -y make wget maven shellcheck
   sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
   sudo chmod +x /usr/local/bin/yq
@@ -178,7 +174,7 @@ function install_strimzi() {
 
   if [ ! -d "$STRIMZI_DIR" ]; then
     echo "Cloning Strimzi Kafka Operator into $STRIMZI_DIR ..."
-    git clone https://github.com/strimzi/strimzi-kafka-operator.git "$STRIMZI_DIR"
+    git clone https://github.com/viktorsomogyi/strimzi-kafka-operator.git "$STRIMZI_DIR"
   fi
 
   cd "$STRIMZI_DIR"
@@ -194,16 +190,28 @@ function install_strimzi() {
    default: false
 EOF
 
-  echo "Building Strimzi Kafka Operator..."
-  make MVN_ARGS='-DskipTests' all
-  cd docker-images/artifacts
-  echo "Building Strimzi Kafka image..."
-  ./build.sh
+  echo "Building Strimzi Kafka Operator and image..."
+  make -C kafka-agent MVN_ARGS='-DskipTests' java_build
+  make -C tracing-agent MVN_ARGS='-DskipTests' java_build
+  make -C docker-images/artifacts MVN_ARGS='-DskipTests' java_build
+  make -C docker-images/base MVN_ARGS='-DskipTests' docker_build
+  make -C docker-images/kafka-based MVN_ARGS='-DskipTests' docker_build
+  
   echo "Importing Strimzi Kafka image into K3s..."
-  cd ../../
-  make docker_build
-
   docker save strimzi/kafka:build-kafka-4.0.0 | sudo k3s ctr images import -
+
+  STATUS=$(helm status $RELEASE_NAME -n $NAMESPACE --output json 2>/dev/null | jq -r '.info.status')
+  if [ -z "$STATUS" ]; then
+    echo "Strimzi Operator not found. Installing fresh..."
+    helm install strimzi-operator strimzi/strimzi-kafka-operator \
+      --namespace strimzi \
+      --set "watchNamespaces={strimzi,kafka}"
+  else
+    echo "Strimzi Operator is currently '$STATUS'. Performing an upgrade to apply changes..."
+    helm upgrade strimzi-operator strimzi/strimzi-kafka-operator \
+      --namespace strimzi \
+      --set "watchNamespaces={strimzi,kafka}"
+  fi
 
   echo "Installed Strimzi"
   cd $SCRIPT_DIR
