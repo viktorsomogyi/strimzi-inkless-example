@@ -99,8 +99,7 @@ function install_minio() {
 
   cd $SCRIPT_DIR
 
-  mkdir -p inkless-data/minio
-  mkdir -p inkless-data/kafka
+  mkdir -p $DATA_DIR/minio
 
   # Read the template and replace placeholders
   TEMP_PVC_FILE=$(mktemp)
