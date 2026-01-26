@@ -54,14 +54,6 @@ else
     echo "git is installed."
 fi
 
-# Install k3s
-if systemctl is-active --quiet k3s; then
-    echo "K3s is already running."
-else
-    echo "Installing K3s..."
-    curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
-fi
-
 # Add required Helm repos
 helm repo add strimzi https://strimzi.io/charts/
 helm repo add minio https://charts.min.io/

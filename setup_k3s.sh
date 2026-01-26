@@ -1,5 +1,13 @@
 #!/bin/bash
 
+# Install k3s
+if systemctl is-active --quiet k3s; then
+    echo "K3s is already running."
+else
+    echo "Installing K3s..."
+    curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+fi
+
 # Setup Kubeconfig environment variable
 K3S_CONFIG="/etc/rancher/k3s/k3s.yaml"
 if [[ "$KUBECONFIG" != "$K3S_CONFIG" ]]; then
@@ -23,9 +31,11 @@ fi
 
 # Final verification of Traefik (K3s default)
 echo "Waiting for Traefik to be ready..."
+sleep 5
 kubectl wait --namespace kube-system \
   --for=condition=ready pod \
   --selector=app.kubernetes.io/name=traefik \
   --timeout=90s
 
 echo "Setup complete!"
+echo "Please run 'source ~/.bashrc' or 'export KUBECONFIG=$K3S_CONFIG' to update your current shell."
