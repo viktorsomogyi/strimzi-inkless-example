@@ -20,6 +20,7 @@ The deployment consists of:
 - **Kafka Cluster** (`inkless-cluster`): 
   - 3 controller nodes (KRaft controllers)
   - 3-9 broker nodes (scales automatically based on CPU)
+  - Controllers and brokers use **ephemeral** Kubernetes storage (no local disks on brokers)
   - Configured with Inkless storage backend pointing to MinIO S3
   
 - **Storage Backend**:
@@ -39,12 +40,24 @@ The deployment consists of:
 
 Before running the setup scripts, ensure you have:
 
+- **kubectl**: Required by all Kubernetes apply/wait steps
+- **Helm**: Required for installing Strimzi/MinIO/monitoring/PostgreSQL charts
 - **Docker**: Installed and running (the daemon must be accessible)
 - **Java 21**: Required for building Strimzi
 - **Git**: For cloning repositories
-- **Maven**: For building Strimzi
+- **curl**: Required by `setup_k3s.sh` (downloads K3s and Helm install script)
+- **Build tools for the Strimzi build**: `make` + `maven` + `wget` (on Debian/Ubuntu, `setup_inkless.sh` installs these via `apt-get`)
 - **jq**: Required by `setup_inkless.sh` (used to detect Helm release status)
+- **sudo**: `setup_inkless.sh` uses `sudo` (K3s image import and installing build tools on Debian/Ubuntu)
 - **Kubernetes cluster**: This repo is optimized for K3s on Linux (Debian/Ubuntu). You can adapt it to other clusters, but the scripts assume `systemctl`, `apt-get`, and `sudo`.
+
+### Important assumptions (current script behavior)
+
+- **Run from the repo root**: `setup_inkless.sh` expects to be executed with the current directory set to this repo (it uses `$(pwd)` as its working directory).
+- **Single-node local PV for MinIO**: MinIO persistence is configured via a **local** `PersistentVolume` with `nodeAffinity` pinned to the node hostname (see `minio-pvc-template.yaml`). On multi-node clusters you must adapt PV/PVC/storage accordingly.
+- **Kafka image is built locally**: The Kafka image used by the cluster and load tests is `strimzi/kafka:build-kafka-4.0.0` (see `kafka.yaml` and `kafka-clients.yaml`).
+  - On **K3s**, `setup_inkless.sh` will import this image into the K3s container runtime if `k3s` is present.
+  - On **non-K3s** clusters, you must ensure your nodes can pull the image (e.g., push it to a registry and update `kafka.yaml`).
 
 ### Quick Setup (Debian/Ubuntu)
 
@@ -59,6 +72,8 @@ This script installs:
 - Docker CE
 - Maven, Git, and other build tools
 - `jq`
+
+If you used this script, you may need to run `source "~/.sdkman/bin/sdkman-init.sh"` to initialize sdk-man in you current shell as otherwise Java 21 might not be available.
 
 ## Installation
 
@@ -92,14 +107,15 @@ Once K3s and Helm are set up, run the main deployment script:
 ```
 
 This will:
-1. Verify prerequisites (Java 21, Docker, Git, jq)
+1. Verify prerequisites (including `kubectl`, `helm`, `docker`, `java`, `git`, `jq`, and cluster access)
 2. Require `KUBECONFIG` to be set (for K3s this is typically `/etc/rancher/k3s/k3s.yaml`)
 3. Add required Helm repositories (Strimzi, MinIO, Prometheus, Bitnami)
 4. Deploy MinIO for S3 storage
 5. Deploy PostgreSQL for Inkless control plane
 6. Deploy Prometheus and Grafana monitoring stack
-7. Build Strimzi with Inkless Kafka integration
-8. Deploy the Kafka cluster with autoscaling
+7. Clone and build a Strimzi fork/branch (`viktorsomogyi/strimzi-kafka-operator`, branch `inkless-compat`) to produce a local Kafka image (`strimzi/kafka:build-kafka-4.0.0`)
+8. Import that Kafka image into K3s (when available) so the cluster can start without pulling from a registry
+9. Deploy the Kafka cluster, HPA, PodMonitor, and Cruise Control auto-rebalance template
 
 #### Script arguments
 
@@ -107,7 +123,7 @@ This will:
 
 - **arg1**: Public IP address (used only for optional Grafana HTTPS via `nip.io`)
 - **arg2**: Email address (used for Let’s Encrypt / cert-manager)
-- **arg3**: Host data directory for MinIO PVs (default: `/tmp/inkless-data`)
+- **arg3**: Host data directory for the **MinIO local PV** (default: `/tmp/inkless-data`)
 
 Examples:
 
@@ -252,7 +268,14 @@ kubectl apply -f kafka-clients.yaml -n kafka
 
 This creates:
 - A test topic (`load-test`) with 100 partitions configured for diskless storage
-- Multiple producer and consumer jobs that generate significant load
+- Multiple producer and consumer **Jobs** that generate significant load (they run until completion or failure)
+
+If you want to re-run the jobs, delete them first:
+
+```bash
+kubectl delete job -n kafka kafka-producer kafka-consumer kafka-consumer2
+kubectl apply -f kafka-clients.yaml -n kafka
+```
 
 Watch the broker pool scale up as CPU utilization increases:
 
@@ -367,6 +390,14 @@ helm uninstall inkless-postgres -n kafka
 
 # Remove namespaces
 kubectl delete namespace kafka strimzi minio monitoring
+```
+
+If you enabled HTTPS via `setup_inkless.sh <IP> <EMAIL>`, you may also want to remove cert-manager and the ClusterIssuer:
+
+```bash
+kubectl delete ingress -n monitoring grafana-ingress
+kubectl delete clusterissuer letsencrypt-prod
+kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
 ```
 
 ## References

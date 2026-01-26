@@ -20,3 +20,5 @@ echo \
 
 sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+echo "Please run 'source "~/.sdkman/bin/sdkman-init.sh"' to update your current shell and use the Java 21 version."

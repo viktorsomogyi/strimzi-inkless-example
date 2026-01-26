@@ -43,7 +43,7 @@ else
 fi
 
 if [ -z "$3" ]; then
-    echo "No data directory provided, using default of /tmp/inkless-data"
+    echo "No data directory provided, using the default /tmp/inkless-data"
     DATA_DIR="/tmp/inkless-data"
 else
     echo "Provided data directory is: $3, using it for MinIO and Kafka data."
