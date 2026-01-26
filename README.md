@@ -37,13 +37,14 @@ The deployment consists of:
 
 ## Prerequisites
 
-Before running the build script, ensure you have:
+Before running the setup scripts, ensure you have:
 
 - **Docker**: Installed and running (the daemon must be accessible)
 - **Java 21**: Required for building Strimzi
 - **Git**: For cloning repositories
 - **Maven**: For building Strimzi
-- **Kubernetes cluster**: K3s will be installed if not present, but you can use any Kubernetes cluster
+- **jq**: Required by `setup_inkless.sh` (used to detect Helm release status)
+- **Kubernetes cluster**: This repo is optimized for K3s on Linux (Debian/Ubuntu). You can adapt it to other clusters, but the scripts assume `systemctl`, `apt-get`, and `sudo`.
 
 ### Quick Setup (Debian/Ubuntu)
 
@@ -57,6 +58,7 @@ This script installs:
 - Java 21 (via SDKMAN)
 - Docker CE
 - Maven, Git, and other build tools
+- `jq`
 
 ## Installation
 
@@ -78,20 +80,20 @@ This script will:
 
 **Note**: 
 - If K3s is already installed and running, this script will skip installation and only configure Helm and KUBECONFIG
-- The KUBECONFIG export is added to your `~/.bashrc` for persistence across sessions
-- You may need to source `~/.bashrc` or start a new terminal session after running this script
+- The KUBECONFIG export is appended to `~/.bashrc` for persistence across sessions (if you use `zsh`, copy it to `~/.zshrc` instead)
+- You may need to run `source ~/.bashrc` (or start a new terminal session) after running this script
 
-### Step 2: Deploy the Stack
+### Step 2: Deploy Inkless + Strimzi + dependencies
 
-Once K3s and Helm are set up, run the main build script:
+Once K3s and Helm are set up, run the main deployment script:
 
 ```bash
-./build.sh
+./setup_inkless.sh
 ```
 
 This will:
-1. Verify prerequisites (Java 21, Docker, Git)
-2. Check if K3s is running (installs it as a fallback if not present)
+1. Verify prerequisites (Java 21, Docker, Git, jq)
+2. Require `KUBECONFIG` to be set (for K3s this is typically `/etc/rancher/k3s/k3s.yaml`)
 3. Add required Helm repositories (Strimzi, MinIO, Prometheus, Bitnami)
 4. Deploy MinIO for S3 storage
 5. Deploy PostgreSQL for Inkless control plane
@@ -99,7 +101,78 @@ This will:
 7. Build Strimzi with Inkless Kafka integration
 8. Deploy the Kafka cluster with autoscaling
 
-**Note**: The `build.sh` script includes fallback K3s installation logic, but it's recommended to run `setup_k3s.sh` first to ensure proper KUBECONFIG configuration.
+#### Script arguments
+
+`setup_inkless.sh` supports optional arguments in this order:
+
+- **arg1**: Public IP address (used only for optional Grafana HTTPS via `nip.io`)
+- **arg2**: Email address (used for Let’s Encrypt / cert-manager)
+- **arg3**: Host data directory for MinIO PVs (default: `/tmp/inkless-data`)
+
+Examples:
+
+```bash
+# Default (uses /tmp/inkless-data)
+./setup_inkless.sh
+
+# Custom data directory only
+./setup_inkless.sh "" "" /var/lib/inkless-data
+
+# Enable HTTPS for Grafana (Google Cloud + HTTP/HTTPS enabled)
+./setup_inkless.sh <YOUR_IP_ADDRESS> <YOUR_EMAIL_ADDRESS>
+```
+
+## Default credentials (and how to extract them)
+
+This repo uses **static defaults** in the scripts/values files (meant for demos). After installing, you can also **read them from Kubernetes Secrets**.
+
+### MinIO (S3 backend)
+
+- **Namespace / release**: `minio` / `minio`
+- **Default**: user `admin`, password `password123` (see `minio-helm.yaml`)
+
+Extract from Kubernetes:
+
+```bash
+kubectl get secret -n minio minio -o jsonpath='{.data.rootUser}' | base64 -d; echo
+kubectl get secret -n minio minio -o jsonpath='{.data.rootPassword}' | base64 -d; echo
+```
+
+### PostgreSQL (Inkless control plane)
+
+- **Namespace / release**: `kafka` / `inkless-postgres`
+- **Default Inkless DB user**: `inkless-username`
+- **Default Inkless DB password**: `mysecretpassword` (set in `setup_inkless.sh`)
+- **Default `postgres` (admin) password**: `admin-password` (set in `setup_inkless.sh`)
+
+Extract from Kubernetes:
+
+```bash
+# Password for auth.username (inkless-username)
+kubectl get secret -n kafka inkless-postgres-postgresql -o jsonpath='{.data.password}' | base64 -d; echo
+
+# Password for the postgres superuser
+kubectl get secret -n kafka inkless-postgres-postgresql -o jsonpath='{.data.postgres-password}' | base64 -d; echo
+```
+
+### Grafana
+
+- **Namespace / release**: `monitoring` / `prometheus-stack`
+
+Extract from Kubernetes:
+
+```bash
+kubectl get secret -n monitoring prometheus-stack-grafana -o jsonpath='{.data.admin-user}' | base64 -d; echo
+kubectl get secret -n monitoring prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo
+```
+
+If any of the secret keys differ in your cluster (chart version changes), print all keys:
+
+```bash
+kubectl get secret -n minio minio -o jsonpath='{.data}'; echo
+kubectl get secret -n kafka inkless-postgres-postgresql -o jsonpath='{.data}'; echo
+kubectl get secret -n monitoring prometheus-stack-grafana -o jsonpath='{.data}'; echo
+```
 
 ### Installation with HTTPS Access (Google Cloud)
 
@@ -110,7 +183,7 @@ If you're running on Google Cloud and want HTTPS access to Grafana:
 ./setup_k3s.sh
 
 # Step 2: Deploy with HTTPS
-./build.sh <YOUR_IP_ADDRESS> <YOUR_EMAIL_ADDRESS>
+./setup_inkless.sh <YOUR_IP_ADDRESS> <YOUR_EMAIL_ADDRESS>
 ```
 
 This will:
@@ -122,8 +195,8 @@ This will:
 
 ```
 .
-├── build.sh                      # Main installation script (deploys all components)
 ├── setup_k3s.sh                  # K3s and Helm setup script
+├── setup_inkless.sh              # Deploy Inkless + dependencies + Kafka
 ├── setup_debian_bookworm.sh      # Debian/Ubuntu prerequisites setup
 ├── kafka.yaml                    # Kafka cluster configuration
 ├── hpa.yaml                      # Horizontal Pod Autoscaler configuration
@@ -135,6 +208,7 @@ This will:
 ├── minio-pvc-template.yaml       # MinIO persistent volume claim template
 ├── minio-sc.yaml                 # MinIO storage class
 ├── monitoring-helm.yaml          # Prometheus/Grafana Helm chart values
+├── grafana-dashboard-config.yaml # Kafka dashboard ConfigMap for Grafana sidecar (installed by setup_inkless.sh)
 ├── grafana-ingress-template.yaml # Grafana ingress template (for HTTPS)
 └── lets-encrypt.yaml             # cert-manager ClusterIssuer template
 ```
@@ -165,6 +239,7 @@ The Kafka cluster is configured with:
 - **Backend**: MinIO S3-compatible storage
 - **Bucket**: `inkless-bucket`
 - **Control Plane**: PostgreSQL database for metadata
+- **MinIO persistence**: A local PersistentVolume at `<DATA_DIR>/minio` on the Kubernetes node (default: `/tmp/inkless-data/minio`). Override `<DATA_DIR>` via the 3rd argument to `setup_inkless.sh`.
 
 ## Load Testing
 
@@ -194,10 +269,20 @@ kubectl get pods -n kafka -l strimzi.io/cluster=inkless-cluster
 ```bash
 kubectl port-forward -n monitoring svc/prometheus-stack-grafana 3000:80
 ```
-Then open `http://localhost:3000` (default credentials: `admin` / `prom-operator`)
+Then open `http://localhost:3000`.
+
+For Grafana username/password, see **Default credentials (and how to extract them)** above.
 
 **HTTPS Access** (if configured):
 Open `https://grafana.<YOUR_IP>.nip.io` in your browser
+
+### Kafka dashboard
+
+`setup_inkless.sh` applies `grafana-dashboard-config.yaml` automatically. If you want to re-apply it (or apply updates), run:
+
+```bash
+kubectl apply -f grafana-dashboard-config.yaml
+```
 
 ### Key Metrics
 
@@ -270,6 +355,9 @@ kubectl delete -f kafka.yaml -n kafka
 kubectl delete -f hpa.yaml -n kafka
 kubectl delete -f pod-monitor.yaml -n kafka
 kubectl delete -f cc-rebalance.yaml -n kafka
+
+# Remove Grafana dashboard ConfigMap (optional)
+kubectl delete -f grafana-dashboard-config.yaml
 
 # Remove Helm releases
 helm uninstall strimzi-operator -n strimzi

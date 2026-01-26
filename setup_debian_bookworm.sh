@@ -1,6 +1,6 @@
 #!/bin/bash
 
-sudo apt-get install -y maven git unzip zip
+sudo apt-get install -y maven git unzip zip jq
 curl -s "https://get.sdkman.io" | bash
 source "$HOME/.sdkman/bin/sdkman-init.sh"
 sdk install java 21.0.6-tem

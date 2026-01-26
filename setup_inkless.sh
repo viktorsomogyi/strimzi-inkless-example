@@ -1,8 +1,26 @@
 #!/bin/bash
 
-SCRIPT_DIR=`pwd`
+SCRIPT_DIR=$(pwd)
 
-JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
+function require_cmd() {
+    CMD="$1"
+    if ! command -v "$CMD" >/dev/null 2>&1; then
+        echo "Error: '$CMD' is not installed or not on PATH."
+        exit 1
+    fi
+}
+
+function require_kube_access() {
+    if ! kubectl config current-context >/dev/null 2>&1; then
+        echo "Error: kubectl has no current context (KUBECONFIG='$KUBECONFIG')."
+        exit 1
+    fi
+    if ! kubectl --request-timeout=10s get namespace >/dev/null 2>&1; then
+        echo "Error: kubectl cannot reach the cluster (KUBECONFIG='$KUBECONFIG')."
+        echo "Try: kubectl --kubeconfig \"$KUBECONFIG\" cluster-info"
+        exit 1
+    fi
+}
 
 if [ -z "$1" ]; then
     echo "No IP address provided, won't set up nip.io access."
@@ -32,6 +50,26 @@ if [ -z "$KUBECONFIG" ]; then
     echo "Error: KUBECONFIG environment variable is not set."
     exit 1
 fi
+if [ ! -r "$KUBECONFIG" ]; then
+    echo "Error: KUBECONFIG points to a missing/unreadable file: $KUBECONFIG"
+    exit 1
+fi
+
+require_cmd awk
+require_cmd cut
+require_cmd docker
+require_cmd git
+require_cmd helm
+require_cmd java
+require_cmd jq
+require_cmd kubectl
+require_cmd mktemp
+require_cmd sed
+require_cmd sudo
+require_cmd hostname
+require_cmd k3s
+
+JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
 
 if [ "$JAVA_VER" = "21" ]; then
     echo "Found Java 21"
@@ -47,12 +85,9 @@ else
     exit 1
 fi
 
-if ! command -v "git" >/dev/null 2>&1; then
-    echo "Error: git is not installed."
-    return 1
-else
-    echo "git is installed."
-fi
+require_kube_access
+
+echo "Required tools are installed (git/jq/helm/kubectl/docker/java/k3s) and cluster is reachable."
 
 # Add required Helm repos
 helm repo add strimzi https://strimzi.io/charts/
@@ -66,32 +101,42 @@ function install_helm_package() {
   NAMESPACE="$1"
   RELEASE_NAME="$2"
   CHART_NAME="$3"
-  VALUES_FILE="$4"
-  STATUS=$(helm status $RELEASE_NAME -n $NAMESPACE --output json 2>/dev/null | jq -r '.info.status')
+  # Pass values files and other flags via extra args, e.g.:
+  # install_helm_package ns rel chart -f values.yaml --set foo=bar
+  shift 3
+  EXTRA_HELM_ARGS=("$@")
+  STATUS=$(helm status "$RELEASE_NAME" -n "$NAMESPACE" --output json 2>/dev/null | jq -r '.info.status')
+  # Wait for the chart's resources to become ready before returning.
+  # Can be overridden via HELM_WAIT_TIMEOUT (e.g. "5m", "15m", "600s").
+  HELM_WAIT_TIMEOUT="${HELM_WAIT_TIMEOUT:-10m}"
+  HELM_WAIT_ARGS=(--wait --timeout "${HELM_WAIT_TIMEOUT}" --wait-for-jobs)
 
   if [ -z "$STATUS" ]; then
     echo "$RELEASE_NAME not found. Installing fresh..."
-    helm install $RELEASE_NAME $CHART_NAME \
-      --namespace $NAMESPACE \
+    helm install "$RELEASE_NAME" "$CHART_NAME" \
+      --namespace "$NAMESPACE" \
       --create-namespace \
-      -f $VALUES_FILE
+      "${HELM_WAIT_ARGS[@]}" \
+      "${EXTRA_HELM_ARGS[@]}"
 
   elif [ "$STATUS" == "failed" ]; then
     echo "$RELEASE_NAME installation is in a FAILED state. Uninstalling and reinstalling..."
-    helm uninstall $RELEASE_NAME -n $NAMESPACE
+    helm uninstall "$RELEASE_NAME" -n "$NAMESPACE" \
+      --wait \
+      --timeout "${HELM_WAIT_TIMEOUT}"
 
-    # Wait a moment for resources to clear
-    sleep 5
-
-    helm install $RELEASE_NAME $CHART_NAME \
-        --namespace $NAMESPACE \
-        -f $VALUES_FILE
+    helm install "$RELEASE_NAME" "$CHART_NAME" \
+        --namespace "$NAMESPACE" \
+        --create-namespace \
+        "${HELM_WAIT_ARGS[@]}" \
+        "${EXTRA_HELM_ARGS[@]}"
 
   else
     echo "$RELEASE_NAME is currently '$STATUS'. Performing an upgrade to apply changes..."
-    helm upgrade $RELEASE_NAME $CHART_NAME \
-        --namespace $NAMESPACE \
-        -f $VALUES_FILE
+    helm upgrade "$RELEASE_NAME" "$CHART_NAME" \
+        --namespace "$NAMESPACE" \
+        "${HELM_WAIT_ARGS[@]}" \
+        "${EXTRA_HELM_ARGS[@]}"
   fi
 }
 
@@ -112,7 +157,7 @@ function install_minio() {
   
   rm -f "$TEMP_PVC_FILE"
 
-  install_helm_package "minio" "minio" "minio/minio" "minio-helm.yaml"
+  install_helm_package "minio" "minio" "minio/minio" -f "minio-helm.yaml"
 
   kubectl exec -n minio deploy/minio -- /bin/sh -c "mc alias set local http://localhost:9000 admin password123 && \
  mc mb local/inkless-bucket"
@@ -123,7 +168,8 @@ function install_minio() {
 function install_monitoring() {
   cd $SCRIPT_DIR
 
-  install_helm_package "monitoring" "prometheus-stack" "prometheus-community/kube-prometheus-stack" monitoring-helm.yaml
+  install_helm_package "monitoring" "prometheus-stack" "prometheus-community/kube-prometheus-stack" -f monitoring-helm.yaml
+  kubectl apply -f grafana-dashboard-config.yaml -n monitoring
   echo "Installed Prometheus and Grafana"
 }
 
@@ -150,13 +196,12 @@ function install_https() {
 }
 
 function install_postgres() {
-  helm install inkless-postgres bitnami/postgresql \
+  install_helm_package "kafka" "inkless-postgres" "bitnami/postgresql" \
     --set global.postgresql.auth.password=mysecretpassword \
     --set primary.persistence.size=10Gi \
     --set auth.username=inkless-username \
     --set auth.database=inkless-db \
-    --set auth.postgresPassword=admin-password \
-    --namespace kafka
+    --set auth.postgresPassword=admin-password
 
   echo "Installed Postgres"
 }
@@ -200,18 +245,8 @@ EOF
   echo "Importing Strimzi Kafka image into K3s..."
   docker save strimzi/kafka:build-kafka-4.0.0 | sudo k3s ctr images import -
 
-  STATUS=$(helm status $RELEASE_NAME -n $NAMESPACE --output json 2>/dev/null | jq -r '.info.status')
-  if [ -z "$STATUS" ]; then
-    echo "Strimzi Operator not found. Installing fresh..."
-    helm install strimzi-operator strimzi/strimzi-kafka-operator \
-      --namespace strimzi \
-      --set "watchNamespaces={strimzi,kafka}"
-  else
-    echo "Strimzi Operator is currently '$STATUS'. Performing an upgrade to apply changes..."
-    helm upgrade strimzi-operator strimzi/strimzi-kafka-operator \
-      --namespace strimzi \
-      --set "watchNamespaces={strimzi,kafka}"
-  fi
+  install_helm_package "strimzi" "strimzi-operator" "strimzi/strimzi-kafka-operator" \
+    --set "watchNamespaces={strimzi,kafka}"
 
   echo "Installed Strimzi"
   cd $SCRIPT_DIR
