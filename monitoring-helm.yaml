@@ -9,3 +9,9 @@ grafana:
       url: http://prometheus-kube-prometheus-prometheus.monitoring.svc:9090
       access: proxy
       isDefault: true
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
