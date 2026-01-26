@@ -2,6 +2,10 @@
 
 SCRIPT_DIR=$(pwd)
 
+function have_cmd() {
+    command -v "$1" >/dev/null 2>&1
+}
+
 function require_cmd() {
     CMD="$1"
     if ! command -v "$CMD" >/dev/null 2>&1; then
@@ -67,7 +71,14 @@ require_cmd mktemp
 require_cmd sed
 require_cmd sudo
 require_cmd hostname
-require_cmd k3s
+
+K3S_AVAILABLE=false
+if have_cmd k3s; then
+    K3S_AVAILABLE=true
+    echo "Found k3s; K3s image import will be available."
+else
+    echo "k3s not found; will skip K3s image import (make sure your cluster can pull the Kafka image)."
+fi
 
 JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
 
@@ -87,7 +98,7 @@ fi
 
 require_kube_access
 
-echo "Required tools are installed (git/jq/helm/kubectl/docker/java/k3s) and cluster is reachable."
+echo "Required tools are installed (git/jq/helm/kubectl/docker/java) and cluster is reachable."
 
 # Add required Helm repos
 helm repo add strimzi https://strimzi.io/charts/
@@ -96,6 +107,48 @@ helm repo add prometheus-community https://prometheus-community.github.io/helm-c
 helm repo add bitnami https://charts.bitnami.com/bitnami
 helm repo update
 
+function k3s_has_image() {
+  IMAGE_REF="$1"
+  if [ "$K3S_AVAILABLE" != "true" ]; then
+    return 1
+  fi
+
+  if sudo k3s ctr images list -q >/dev/null 2>&1; then
+    sudo k3s ctr images list -q | awk -v img="$IMAGE_REF" '$0==img {found=1} END {exit !found}'
+    return $?
+  fi
+
+  # Backward compatibility with ctr versions that use `ls`
+  if sudo k3s ctr images ls -q >/dev/null 2>&1; then
+    sudo k3s ctr images ls -q | awk -v img="$IMAGE_REF" '$0==img {found=1} END {exit !found}'
+    return $?
+  fi
+
+  return 1
+}
+
+function ensure_kafka_image_available() {
+  KAFKA_IMAGE="strimzi/kafka:build-kafka-4.0.0"
+
+  if ! docker image inspect "$KAFKA_IMAGE" >/dev/null 2>&1; then
+    echo "Error: Docker image '$KAFKA_IMAGE' not found locally."
+    echo "The Strimzi build step may have failed."
+    exit 1
+  fi
+
+  if [ "$K3S_AVAILABLE" != "true" ]; then
+    echo "k3s not found; skipping import of '$KAFKA_IMAGE'."
+    return 0
+  fi
+
+  if k3s_has_image "$KAFKA_IMAGE"; then
+    echo "K3s already has '$KAFKA_IMAGE'; skipping image import."
+    return 0
+  fi
+
+  echo "Importing '$KAFKA_IMAGE' into K3s..."
+  docker save "$KAFKA_IMAGE" | sudo k3s ctr images import -
+}
 
 function install_helm_package() {
   NAMESPACE="$1"
@@ -242,8 +295,8 @@ EOF
   make -C docker-images/base MVN_ARGS='-DskipTests' docker_build
   make -C docker-images/kafka-based MVN_ARGS='-DskipTests' docker_build
   
-  echo "Importing Strimzi Kafka image into K3s..."
-  docker save strimzi/kafka:build-kafka-4.0.0 | sudo k3s ctr images import -
+  # Make sure the Kafka 4.0.0 image is available before installing Strimzi/Kafka.
+  ensure_kafka_image_available
 
   install_helm_package "strimzi" "strimzi-operator" "strimzi/strimzi-kafka-operator" \
     --set "watchNamespaces={strimzi,kafka}"
@@ -254,6 +307,9 @@ EOF
 
 function install_kafka() {
   cd $SCRIPT_DIR
+
+  # Ensure the Kafka image is present before creating Kafka resources.
+  ensure_kafka_image_available
 
   kubectl apply -f kafka.yaml -n kafka
   kubectl apply -f hpa.yaml -n kafka
