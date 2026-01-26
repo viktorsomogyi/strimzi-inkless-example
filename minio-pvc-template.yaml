@@ -11,7 +11,7 @@ spec:
   persistentVolumeReclaimPolicy: Retain
   storageClassName: minio-local-storage
   local:
-    path: __SCRIPT_DIR__/inkless-data/minio
+    path: __DATA_DIR__/minio
   nodeAffinity:
     required:
       nodeSelectorTerms:

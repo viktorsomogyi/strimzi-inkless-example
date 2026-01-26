@@ -20,6 +20,14 @@ else
     EMAIL_ADDRESS=$2
 fi
 
+if [ -z "$3" ]; then
+    echo "No data directory provided, using default of /tmp/inkless-data"
+    DATA_DIR="/tmp/inkless-data"
+else
+    echo "Provided data directory is: $3, using it for MinIO and Kafka data."
+    DATA_DIR=$3
+fi
+
 if [ -z "$KUBECONFIG" ]; then
     echo "Error: KUBECONFIG environment variable is not set."
     exit 1
@@ -104,7 +112,7 @@ function install_minio() {
 
   # Read the template and replace placeholders
   TEMP_PVC_FILE=$(mktemp)
-  sed "s|__SCRIPT_DIR__|$SCRIPT_DIR|g; s|__HOSTNAME__|$(hostname)|g" minio-pvc-template.yaml > "$TEMP_PVC_FILE"
+  sed "s|__DATA_DIR__|$DATA_DIR|g; s|__HOSTNAME__|$(hostname)|g" minio-pvc-template.yaml > "$TEMP_PVC_FILE"
 
   kubectl create namespace minio
 
