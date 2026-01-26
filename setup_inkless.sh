@@ -278,16 +278,6 @@ function install_strimzi() {
   cd "$STRIMZI_DIR"
   git checkout inkless-compat
 
-  cat << EOF > kafka-versions.yaml
- - version: 4.0.0
-   metadata: 4.0
-   url: https://github.com/aiven/inkless/releases/download/inkless-4.0.0-rc32/kafka_2.13-4.0.0-inkless.tgz
-   checksum: 855b902678e60fa218805f49d809395d5c5c5ea5dcd7bab4440e05405d5a5931a397e65ea587e2a2389a0fde40fa16d33d3d8ea2abfc42b56ee093558868d1b0
-   third-party-libs: 4.0.x
-   supported: true
-   default: false
-EOF
-
   echo "Building Strimzi Kafka Operator and image..."
   make -C kafka-agent MVN_ARGS='-DskipTests' java_build
   make -C tracing-agent MVN_ARGS='-DskipTests' java_build
