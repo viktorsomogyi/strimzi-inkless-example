@@ -2,6 +2,8 @@
 
 A complete demonstration of **Aiven's Inkless** (a KIP-1150 implementation) running on a **Strimzi Kafka cluster** with CPU-based elastic autoscaling. This project showcases how to deploy a diskless Kafka cluster that uses S3-compatible storage (MinIO) instead of local disk, enabling true stateless Kafka brokers that can scale horizontally based on CPU utilization.
 
+**Deploying**: Run the setup script; the Kafka image is pulled from GHCR (no build required). **Building the image**: See [DEVELOPMENT.md](DEVELOPMENT.md).
+
 ## Overview
 
 This example demonstrates:
@@ -38,42 +40,21 @@ The deployment consists of:
 
 ## Prerequisites
 
-Before running the setup scripts, ensure you have:
+To **deploy** the example (no build required), you need:
 
-- **kubectl**: Required by all Kubernetes apply/wait steps
-- **Helm**: Required for installing Strimzi/MinIO/monitoring/PostgreSQL charts
-- **Docker**: Installed and running (the daemon must be accessible)
-- **Java 21**: Required for building Strimzi
-- **Git**: For cloning repositories
-- **curl**: Required by `setup_k3s.sh` (downloads K3s and Helm install script)
-- **Build tools for the Strimzi build**: `make` + `maven` + `wget` (on Debian/Ubuntu, `setup_inkless.sh` installs these via `apt-get`)
-- **jq**: Required by `setup_inkless.sh` (used to detect Helm release status)
-- **sudo**: `setup_inkless.sh` uses `sudo` (K3s image import and installing build tools on Debian/Ubuntu)
-- **Kubernetes cluster**: This repo is optimized for K3s on Linux (Debian/Ubuntu). You can adapt it to other clusters, but the scripts assume `systemctl`, `apt-get`, and `sudo`.
+- **kubectl**: Kubernetes CLI
+- **Helm**: For installing Strimzi, MinIO, monitoring, and PostgreSQL charts
+- **jq**: Used by the setup script to detect Helm release status
+- **Kubernetes cluster**: Optimized for K3s on Linux (Debian/Ubuntu); adaptable to other clusters
+- **curl**: Required by `setup_k3s.sh` (K3s and Helm install)
 
-### Important assumptions (current script behavior)
+The Kafka image is **pre-built** and pulled from GitHub Container Registry (GHCR). You do not need Docker, Java, or Git to run the setup. To build and publish the image yourself, see [DEVELOPMENT.md](DEVELOPMENT.md).
 
-- **Run from the repo root**: `setup_inkless.sh` expects to be executed with the current directory set to this repo (it uses `$(pwd)` as its working directory).
-- **Single-node local PV for MinIO**: MinIO persistence is configured via a **local** `PersistentVolume` with `nodeAffinity` pinned to the node hostname (see `minio-pvc-template.yaml`). On multi-node clusters you must adapt PV/PVC/storage accordingly.
-- **Kafka image is built locally**: The Kafka image used by the cluster and load tests is `strimzi/kafka:build-kafka-4.0.0` (see `kafka.yaml` and `kafka-clients.yaml`).
-  - On **K3s**, `setup_inkless.sh` will import this image into the K3s container runtime if `k3s` is present.
-  - On **non-K3s** clusters, you must ensure your nodes can pull the image (e.g., push it to a registry and update `kafka.yaml`).
+### Assumptions
 
-### Quick Setup (Debian/Ubuntu)
-
-For Google Cloud Debian Bookworm systems, use the provided setup script:
-
-```bash
-./setup_debian_bookworm.sh
-```
-
-This script installs:
-- Java 21 (via SDKMAN)
-- Docker CE
-- Maven, Git, and other build tools
-- `jq`
-
-If you used this script, you may need to run `source "~/.sdkman/bin/sdkman-init.sh"` to initialize sdk-man in you current shell as otherwise Java 21 might not be available.
+- **Run from the repo root**: `setup_inkless.sh` uses `$(pwd)` as the repo directory.
+- **Single-node local PV for MinIO**: MinIO uses a **local** `PersistentVolume` with `nodeAffinity` to the node hostname (see `minio-pvc-template.yaml`). On multi-node clusters, adapt PV/PVC/storage as needed.
+- **Kafka image**: Default `ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.0.0`. Override with `KAFKA_IMAGE` if you use a different tag. For a private image, configure imagePullSecrets so the cluster can pull.
 
 ## Installation
 
@@ -100,22 +81,19 @@ This script will:
 
 ### Step 2: Deploy Inkless + Strimzi + dependencies
 
-Once K3s and Helm are set up, run the main deployment script:
+Run the deployment script from the repo root:
 
 ```bash
 ./setup_inkless.sh
 ```
 
 This will:
-1. Verify prerequisites (including `kubectl`, `helm`, `docker`, `java`, `git`, `jq`, and cluster access)
-2. Require `KUBECONFIG` to be set (for K3s this is typically `/etc/rancher/k3s/k3s.yaml`)
-3. Add required Helm repositories (Strimzi, MinIO, Prometheus, Bitnami)
-4. Deploy MinIO for S3 storage
-5. Deploy PostgreSQL for Inkless control plane
-6. Deploy Prometheus and Grafana monitoring stack
-7. Clone and build a Strimzi fork/branch (`viktorsomogyi/strimzi-kafka-operator`, branch `inkless-compat`) to produce a local Kafka image (`strimzi/kafka:build-kafka-4.0.0`)
-8. Import that Kafka image into K3s (when available) so the cluster can start without pulling from a registry
-9. Deploy the Kafka cluster, HPA, PodMonitor, and Cruise Control auto-rebalance template
+1. Verify prerequisites (`kubectl`, `helm`, `jq`, cluster access) and `KUBECONFIG`
+2. Add required Helm repositories (Strimzi, MinIO, Prometheus, Bitnami)
+3. Deploy MinIO for S3 storage
+4. Deploy PostgreSQL for Inkless control plane
+5. Deploy Prometheus and Grafana monitoring stack
+6. Install the Strimzi Kafka Operator and deploy the Kafka cluster (pulling the Kafka image from GHCR), HPA, PodMonitor, and Cruise Control auto-rebalance template
 
 #### Script arguments
 
@@ -124,6 +102,10 @@ This will:
 - **arg1**: Public IP address (used only for optional Grafana HTTPS via `nip.io`)
 - **arg2**: Email address (used for Let’s Encrypt / cert-manager)
 - **arg3**: Host data directory for the **MinIO local PV** (default: `/tmp/inkless-data`)
+
+Environment:
+
+- **KAFKA_IMAGE**: Kafka image to use (default: `ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.0.0`). The cluster and load-test jobs pull this image. Override if you use a different tag or registry (e.g. after building locally; see [DEVELOPMENT.md](DEVELOPMENT.md)).
 
 Examples:
 
@@ -211,9 +193,12 @@ This will:
 
 ```
 .
+├── README.md                     # User guide (this file)
+├── DEVELOPMENT.md                # Building and publishing the Kafka image
 ├── setup_k3s.sh                  # K3s and Helm setup script
-├── setup_inkless.sh              # Deploy Inkless + dependencies + Kafka
-├── setup_debian_bookworm.sh      # Debian/Ubuntu prerequisites setup
+├── setup_inkless.sh              # Deploy Inkless + dependencies + Kafka (install only, no build)
+├── build_and_push_kafka_image.sh # Build and push Kafka image to GHCR (see DEVELOPMENT.md)
+├── setup_debian_bookworm.sh      # Dev prerequisites (Java, Docker, Maven, etc.)
 ├── kafka.yaml                    # Kafka cluster configuration
 ├── hpa.yaml                      # Horizontal Pod Autoscaler configuration
 ├── kafka-clients.yaml            # Load testing producer/consumer jobs
@@ -259,11 +244,13 @@ The Kafka cluster is configured with:
 
 ## Load Testing
 
-To start load testing and observe autoscaling in action:
+To start load testing and observe autoscaling in action, use the same Kafka image as the cluster (manifests use a placeholder; the script substitutes it when applying):
 
 ```bash
+# Use the same KAFKA_IMAGE as at install time (default: ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.0.0)
+KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.0.0}"
 kubectl apply -f load-test-topic.yaml -n kafka
-kubectl apply -f kafka-clients.yaml -n kafka
+sed "s|__KAFKA_IMAGE__|$KAFKA_IMAGE|g" kafka-clients.yaml | kubectl apply -f - -n kafka
 ```
 
 This creates:
@@ -274,7 +261,7 @@ If you want to re-run the jobs, delete them first:
 
 ```bash
 kubectl delete job -n kafka kafka-producer kafka-consumer kafka-consumer2
-kubectl apply -f kafka-clients.yaml -n kafka
+sed "s|__KAFKA_IMAGE__|$KAFKA_IMAGE|g" kafka-clients.yaml | kubectl apply -f - -n kafka
 ```
 
 Watch the broker pool scale up as CPU utilization increases:
@@ -371,10 +358,11 @@ kubectl exec -n kafka -it $(kubectl get pod -n kafka -l app.kubernetes.io/name=p
 To remove all components:
 
 ```bash
-# Remove Kafka resources
-kubectl delete -f kafka-clients.yaml -n kafka
+# Remove Kafka resources (use same KAFKA_IMAGE as at install for kafka.yaml; jobs are deleted by name)
+KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.0.0}"
+kubectl delete job -n kafka kafka-producer kafka-consumer kafka-consumer2 --ignore-not-found
 kubectl delete -f load-test-topic.yaml -n kafka
-kubectl delete -f kafka.yaml -n kafka
+sed "s|__KAFKA_IMAGE__|$KAFKA_IMAGE|g" kafka.yaml | kubectl delete -f - -n kafka
 kubectl delete -f hpa.yaml -n kafka
 kubectl delete -f pod-monitor.yaml -n kafka
 kubectl delete -f cc-rebalance.yaml -n kafka

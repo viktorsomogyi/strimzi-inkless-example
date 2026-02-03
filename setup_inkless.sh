@@ -50,6 +50,9 @@ else
     DATA_DIR=$3
 fi
 
+# Kafka image: pulled from GHCR when installing (see DEVELOPMENT.md to build and push your own).
+KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.0.0}"
+
 if [ -z "$KUBECONFIG" ]; then
     echo "Error: KUBECONFIG environment variable is not set."
     exit 1
@@ -59,46 +62,16 @@ if [ ! -r "$KUBECONFIG" ]; then
     exit 1
 fi
 
-require_cmd awk
-require_cmd cut
-require_cmd docker
-require_cmd git
 require_cmd helm
-require_cmd java
 require_cmd jq
 require_cmd kubectl
 require_cmd mktemp
 require_cmd sed
-require_cmd sudo
 require_cmd hostname
-
-K3S_AVAILABLE=false
-if have_cmd k3s; then
-    K3S_AVAILABLE=true
-    echo "Found k3s; K3s image import will be available."
-else
-    echo "k3s not found; will skip K3s image import (make sure your cluster can pull the Kafka image)."
-fi
-
-JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}' | cut -d'.' -f1)
-
-if [ "$JAVA_VER" = "21" ]; then
-    echo "Found Java 21"
-else
-    echo "Java 21 required, but found version: $JAVA_VER"
-    exit 1
-fi
-
-if docker info >/dev/null 2>&1; then
-    echo "Docker is running and accessible."
-else
-    echo "Docker is installed but the daemon is not running or you lack permissions."
-    exit 1
-fi
 
 require_kube_access
 
-echo "Required tools are installed (git/jq/helm/kubectl/docker/java) and cluster is reachable."
+echo "Required tools are installed (helm/kubectl/jq) and cluster is reachable."
 
 # Add required Helm repos
 helm repo add strimzi https://strimzi.io/charts/
@@ -106,49 +79,6 @@ helm repo add minio https://charts.min.io/
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
 helm repo add bitnami https://charts.bitnami.com/bitnami
 helm repo update
-
-function k3s_has_image() {
-  IMAGE_REF="$1"
-  if [ "$K3S_AVAILABLE" != "true" ]; then
-    return 1
-  fi
-
-  if sudo k3s ctr images list -q >/dev/null 2>&1; then
-    sudo k3s ctr images list -q | awk -v img="$IMAGE_REF" '$0==img {found=1} END {exit !found}'
-    return $?
-  fi
-
-  # Backward compatibility with ctr versions that use `ls`
-  if sudo k3s ctr images ls -q >/dev/null 2>&1; then
-    sudo k3s ctr images ls -q | awk -v img="$IMAGE_REF" '$0==img {found=1} END {exit !found}'
-    return $?
-  fi
-
-  return 1
-}
-
-function ensure_kafka_image_available() {
-  KAFKA_IMAGE="strimzi/kafka:build-kafka-4.0.0"
-
-  if ! docker image inspect "$KAFKA_IMAGE" >/dev/null 2>&1; then
-    echo "Error: Docker image '$KAFKA_IMAGE' not found locally."
-    echo "The Strimzi build step may have failed."
-    exit 1
-  fi
-
-  if [ "$K3S_AVAILABLE" != "true" ]; then
-    echo "k3s not found; skipping import of '$KAFKA_IMAGE'."
-    return 0
-  fi
-
-  if k3s_has_image "$KAFKA_IMAGE"; then
-    echo "K3s already has '$KAFKA_IMAGE'; skipping image import."
-    return 0
-  fi
-
-  echo "Importing '$KAFKA_IMAGE' into K3s..."
-  docker save "$KAFKA_IMAGE" | sudo k3s ctr images import -
-}
 
 function install_helm_package() {
   NAMESPACE="$1"
@@ -255,49 +185,24 @@ function install_postgres() {
   echo "Installed Postgres"
 }
 
-# Install Strimzi, then build it to compile the Inkless Kafka image
+# Install Strimzi Kafka Operator (Kafka image is pulled from GHCR; see DEVELOPMENT.md to build/push).
 function install_strimzi() {
   kubectl create namespace strimzi
   kubectl create namespace kafka
-
-  sudo apt-get install -y make wget maven shellcheck
-  sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
-  sudo chmod +x /usr/local/bin/yq
-
-  STRIMZI_DIR="/tmp/strimzi-kafka-operator"
-
-  if [ ! -d "$STRIMZI_DIR" ]; then
-    echo "Cloning Strimzi Kafka Operator into $STRIMZI_DIR ..."
-    git clone https://github.com/viktorsomogyi/strimzi-kafka-operator.git "$STRIMZI_DIR"
-  fi
-
-  cd "$STRIMZI_DIR"
-  git checkout inkless-compat
-
-  echo "Building Strimzi Kafka Operator and image..."
-  make -C kafka-agent MVN_ARGS='-DskipTests' java_build
-  make -C tracing-agent MVN_ARGS='-DskipTests' java_build
-  make -C docker-images/artifacts MVN_ARGS='-DskipTests' java_build
-  make -C docker-images/base MVN_ARGS='-DskipTests' docker_build
-  make -C docker-images/kafka-based MVN_ARGS='-DskipTests' docker_build
-  
-  # Make sure the Kafka 4.0.0 image is available before installing Strimzi/Kafka.
-  ensure_kafka_image_available
 
   install_helm_package "strimzi" "strimzi-operator" "strimzi/strimzi-kafka-operator" \
     --set "watchNamespaces={strimzi,kafka}"
 
   echo "Installed Strimzi"
-  cd $SCRIPT_DIR
 }
 
 function install_kafka() {
   cd $SCRIPT_DIR
 
-  # Ensure the Kafka image is present before creating Kafka resources.
-  ensure_kafka_image_available
-
-  kubectl apply -f kafka.yaml -n kafka
+  TEMP_KAFKA_FILE=$(mktemp)
+  sed "s|__KAFKA_IMAGE__|$KAFKA_IMAGE|g" kafka.yaml > "$TEMP_KAFKA_FILE"
+  kubectl apply -f "$TEMP_KAFKA_FILE" -n kafka
+  rm -f "$TEMP_KAFKA_FILE"
   kubectl apply -f hpa.yaml -n kafka
   kubectl apply -f pod-monitor.yaml -n kafka
   kubectl apply -f cc-rebalance.yaml -n kafka
@@ -308,7 +213,10 @@ function install_kafka() {
 function start_load_testing() {
   cd $SCRIPT_DIR
   kubectl apply -f load-test-topic.yaml -n kafka
-  kubectl apply -f kafka-clients.yaml -n kafka
+  TEMP_CLIENTS_FILE=$(mktemp)
+  sed "s|__KAFKA_IMAGE__|$KAFKA_IMAGE|g" kafka-clients.yaml > "$TEMP_CLIENTS_FILE"
+  kubectl apply -f "$TEMP_CLIENTS_FILE" -n kafka
+  rm -f "$TEMP_CLIENTS_FILE"
 }
 
 install_minio

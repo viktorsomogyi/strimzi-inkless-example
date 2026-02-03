@@ -43,7 +43,7 @@ metadata:
 spec:
   kafka:
     version: 4.0.0
-    image: strimzi/kafka:build-kafka-4.0.0
+    image: __KAFKA_IMAGE__
     metadataVersion: 4.0-IV0
     listeners:
       - name: plain

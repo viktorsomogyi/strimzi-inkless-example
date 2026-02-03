@@ -17,7 +17,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: kafka-producer
-        image: strimzi/kafka:build-kafka-4.0.0
+        image: __KAFKA_IMAGE__
         command: [ "bin/kafka-producer-perf-test.sh" ]
         args: [ "--topic", "load-test", "--throughput", "1000000000", "--num-records", "1000000000", "--producer-props", "acks=all", "bootstrap.servers=inkless-cluster-kafka-bootstrap:9092", "--record-size", "1000" ]
 ---
@@ -40,7 +40,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: kafka-consumer
-        image: strimzi/kafka:build-kafka-4.0.0
+        image: __KAFKA_IMAGE__
         command: [ "/bin/sh" ]
         args: [ "-c", "echo \"group.id=load-group-1\" >> /tmp/consumer.config; bin/kafka-consumer-perf-test.sh --topic load-test --messages 1000000000 --bootstrap-server inkless-cluster-kafka-bootstrap:9092 --show-detailed-stats --timeout 300000 --group load-consumer --consumer.config /tmp/consumer.config" ]
 ---
@@ -63,6 +63,6 @@ spec:
       restartPolicy: Never
       containers:
       - name: kafka-consumer
-        image: strimzi/kafka:build-kafka-4.0.0
+        image: __KAFKA_IMAGE__
         command: [ "/bin/sh" ]
         args: [ "-c", "echo \"group.id=load-group-2\" > /tmp/consumer.config; bin/kafka-consumer-perf-test.sh --topic load-test --messages 1000000000 --bootstrap-server inkless-cluster-kafka-bootstrap:9092 --show-detailed-stats --timeout 300000 --group load-consumer2 --consumer.config /tmp/consumer.config" ]
