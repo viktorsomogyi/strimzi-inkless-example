@@ -1,0 +1,23 @@
+global:
+  postgresql:
+    auth:
+      password: "mysecretpassword"
+auth:
+  username: "inkless-username"
+  database: "inkless-db"
+  postgresPassword: "admin-password"
+primary:
+  persistence:
+    size: "10Gi"
+  resources:
+    limits:
+      memory: "2Gi"
+    requests:
+      memory: "1Gi"
+  shmVolume:
+    enabled: true
+  extraFlags:
+    - "--shared_buffers=512MB"
+    - "--work_mem=16MB"
+metrics:
+  enabled: true

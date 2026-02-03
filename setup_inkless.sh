@@ -250,11 +250,7 @@ function install_https() {
 
 function install_postgres() {
   install_helm_package "kafka" "inkless-postgres" "bitnami/postgresql" \
-    --set global.postgresql.auth.password=mysecretpassword \
-    --set primary.persistence.size=10Gi \
-    --set auth.username=inkless-username \
-    --set auth.database=inkless-db \
-    --set auth.postgresPassword=admin-password
+    -f postgres-helm.yaml
 
   echo "Installed Postgres"
 }
