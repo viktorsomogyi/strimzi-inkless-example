@@ -50,8 +50,15 @@ else
     DATA_DIR=$3
 fi
 
+# Kernel machine type: x86_64, aarch64, arm64, armv7l, etc.
+case "$(uname -m)" in
+  x86_64|amd64)   ARCHITECTURE=amd64 ;;
+  aarch64|arm64)  ARCHITECTURE=arm64 ;;
+  *)              echo "Error: Unsupported architecture: $(uname -m)" && exit 1 ;;
+esac
+
 # Kafka image: pulled from GHCR when installing (see DEVELOPMENT.md to build and push your own).
-KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.0.0}"
+KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:4.1.1-0.34-${ARCHITECTURE}}"
 
 if [ -z "$KUBECONFIG" ]; then
     echo "Error: KUBECONFIG environment variable is not set."

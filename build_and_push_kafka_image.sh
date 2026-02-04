@@ -17,17 +17,23 @@ function require_cmd() {
 KAFKA_VERSION="${KAFKA_VERSION:-4.1.1}"
 INKLESS_VERSION="${INKLESS_VERSION:-0.34}"
 
-# https://github.com/aiven/inkless/releases/download/inkless-release-0.34/kafka_2.13-4.1.1-inkless.tgz
-KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:${KAFKA_VERSION}-${INKLESS_VERSION}}"
+DOCKER_REPO="${DOCKER_REPO:-ghcr.io/viktorsomogyi}"
 STRIMZI_DIR="${STRIMZI_DIR:-$(mktemp -d)}"
 ARCHITECTURE="${ARCHITECTURE:-arm64}"
 
-# Strimzi docker build tags non-amd64 images with an architecture suffix (e.g. build-kafka-4.1.1-arm64).
-if [ "$ARCHITECTURE" = "amd64" ]; then
-  LOCAL_KAFKA_IMAGE="strimzi/kafka:build-kafka-${KAFKA_VERSION}"
-else
-  LOCAL_KAFKA_IMAGE="strimzi/kafka:build-kafka-${KAFKA_VERSION}-${ARCHITECTURE}"
-fi
+KAFKA_IMAGE="${KAFKA_IMAGE:-${DOCKER_REPO}/strimzi-inkless:${KAFKA_VERSION}-${INKLESS_VERSION}-${ARCHITECTURE}}"
+LOCAL_KAFKA_IMAGE="strimzi/kafka:build-kafka-${KAFKA_VERSION}-${ARCHITECTURE}"
+
+echo "--------------------------------"
+echo "Environment variables:"
+echo "KAFKA_VERSION: $KAFKA_VERSION"
+echo "INKLESS_VERSION: $INKLESS_VERSION"
+echo "DOCKER_REPO: $DOCKER_REPO"
+echo "STRIMZI_DIR: $STRIMZI_DIR"
+echo "ARCHITECTURE: $ARCHITECTURE"
+echo "KAFKA_IMAGE: $KAFKA_IMAGE"
+echo "LOCAL_KAFKA_IMAGE: $LOCAL_KAFKA_IMAGE"
+echo "--------------------------------"
 
 require_cmd docker
 require_cmd git
@@ -47,7 +53,6 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 echo "Building Strimzi Kafka image and pushing to $KAFKA_IMAGE"
-echo "Strimzi clone: $STRIMZI_DIR"
 
 echo "Cloning Strimzi Kafka Operator into $STRIMZI_DIR ..."
 git clone https://github.com/viktorsomogyi/strimzi-kafka-operator.git "$STRIMZI_DIR"
@@ -57,6 +62,7 @@ git fetch origin
 git checkout inkless-compat
 
 echo "Building Strimzi Kafka Operator and image..."
+DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C base MVN_ARGS='-DskipTests' java_build
 DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C kafka-agent MVN_ARGS='-DskipTests' java_build
 DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C tracing-agent MVN_ARGS='-DskipTests' java_build
 DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C docker-images/artifacts MVN_ARGS='-DskipTests' java_build
