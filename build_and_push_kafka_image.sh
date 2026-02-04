@@ -3,7 +3,7 @@
 # For end-users, the pre-built image is used by setup_inkless.sh (see README).
 # Run this script only when you need to rebuild and publish the image (e.g. maintainers, CI).
 
-set -x
+set -e
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 
@@ -19,10 +19,11 @@ INKLESS_VERSION="${INKLESS_VERSION:-0.34}"
 
 DOCKER_REPO="${DOCKER_REPO:-ghcr.io/viktorsomogyi}"
 STRIMZI_DIR="${STRIMZI_DIR:-$(mktemp -d)}"
-ARCHITECTURE="${ARCHITECTURE:-arm64}"
+# Build for both platforms and create a multi-arch manifest (override to build a single arch only)
+ARCHITECTURES="${ARCHITECTURES:-amd64 arm64}"
 
-KAFKA_IMAGE="${KAFKA_IMAGE:-${DOCKER_REPO}/strimzi-inkless:${KAFKA_VERSION}-${INKLESS_VERSION}-${ARCHITECTURE}}"
-LOCAL_KAFKA_IMAGE="strimzi/kafka:build-kafka-${KAFKA_VERSION}-${ARCHITECTURE}"
+# Multi-arch tag (no arch suffix); users pull this and get the right image for their platform
+MULTI_ARCH_IMAGE="${DOCKER_REPO}/strimzi-inkless:${KAFKA_VERSION}-${INKLESS_VERSION}"
 
 echo "--------------------------------"
 echo "Environment variables:"
@@ -30,9 +31,8 @@ echo "KAFKA_VERSION: $KAFKA_VERSION"
 echo "INKLESS_VERSION: $INKLESS_VERSION"
 echo "DOCKER_REPO: $DOCKER_REPO"
 echo "STRIMZI_DIR: $STRIMZI_DIR"
-echo "ARCHITECTURE: $ARCHITECTURE"
-echo "KAFKA_IMAGE: $KAFKA_IMAGE"
-echo "LOCAL_KAFKA_IMAGE: $LOCAL_KAFKA_IMAGE"
+echo "ARCHITECTURES: $ARCHITECTURES"
+echo "MULTI_ARCH_IMAGE: $MULTI_ARCH_IMAGE"
 echo "--------------------------------"
 
 require_cmd docker
@@ -52,7 +52,7 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "Building Strimzi Kafka image and pushing to $KAFKA_IMAGE"
+echo "Building Strimzi Kafka images for $ARCHITECTURES and creating multi-arch manifest $MULTI_ARCH_IMAGE"
 
 echo "Cloning Strimzi Kafka Operator into $STRIMZI_DIR ..."
 git clone https://github.com/viktorsomogyi/strimzi-kafka-operator.git "$STRIMZI_DIR"
@@ -61,26 +61,46 @@ cd "$STRIMZI_DIR"
 git fetch origin
 git checkout inkless-compat
 
-echo "Building Strimzi Kafka Operator and image..."
-DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C base MVN_ARGS='-DskipTests' java_build
-DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C kafka-agent MVN_ARGS='-DskipTests' java_build
-DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C tracing-agent MVN_ARGS='-DskipTests' java_build
-DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C docker-images/artifacts MVN_ARGS='-DskipTests' java_build
-DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C docker-images/base MVN_ARGS='-DskipTests' docker_build
-DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C docker-images/kafka-based MVN_ARGS='-DskipTests' docker_build
+# Build, tag and push each architecture
+for ARCHITECTURE in $ARCHITECTURES; do
+  LOCAL_KAFKA_IMAGE="strimzi/kafka:build-kafka-${KAFKA_VERSION}-${ARCHITECTURE}"
+  ARCH_IMAGE="${MULTI_ARCH_IMAGE}-${ARCHITECTURE}"
 
-if ! docker image inspect "$LOCAL_KAFKA_IMAGE" >/dev/null 2>&1; then
-  echo "Error: Docker image '$LOCAL_KAFKA_IMAGE' not found after build."
+  echo "===== Building for $ARCHITECTURE ====="
+  DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C kafka-agent MVN_ARGS='-DskipTests' java_build
+  DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C tracing-agent MVN_ARGS='-DskipTests' java_build
+  DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C docker-images/artifacts MVN_ARGS='-DskipTests' java_build
+  DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C docker-images/base MVN_ARGS='-DskipTests' docker_build
+  DOCKER_ARCHITECTURE=${ARCHITECTURE} make -C docker-images/kafka-based MVN_ARGS='-DskipTests' docker_build
+
+  if ! docker image inspect "$LOCAL_KAFKA_IMAGE" >/dev/null 2>&1; then
+    echo "Error: Docker image '$LOCAL_KAFKA_IMAGE' not found after build."
+    exit 1
+  fi
+
+  echo "Tagging and pushing $ARCH_IMAGE ..."
+  docker tag "$LOCAL_KAFKA_IMAGE" "$ARCH_IMAGE"
+  if ! docker push "$ARCH_IMAGE"; then
+    echo "Error: Failed to push. Log in with: docker login ghcr.io"
+    echo "Use a GitHub PAT with read:packages and write:packages."
+    exit 1
+  fi
+  echo "Pushed $ARCH_IMAGE successfully."
+done
+
+# Create and push multi-arch manifest so one tag resolves to the correct arch
+echo "===== Creating multi-arch manifest $MULTI_ARCH_IMAGE ====="
+export DOCKER_CLI_EXPERIMENTAL=enabled
+MANIFEST_IMAGES=""
+for ARCHITECTURE in $ARCHITECTURES; do
+  MANIFEST_IMAGES="${MANIFEST_IMAGES} ${MULTI_ARCH_IMAGE}-${ARCHITECTURE}"
+done
+docker manifest rm "$MULTI_ARCH_IMAGE" 2>/dev/null || true
+docker manifest create "$MULTI_ARCH_IMAGE" $MANIFEST_IMAGES
+if ! docker manifest push "$MULTI_ARCH_IMAGE"; then
+  echo "Error: Failed to push manifest. Ensure Docker manifest is enabled (DOCKER_CLI_EXPERIMENTAL=enabled)."
   exit 1
 fi
 
-echo "Tagging and pushing to $KAFKA_IMAGE ..."
-docker tag "$LOCAL_KAFKA_IMAGE" "$KAFKA_IMAGE"
-if ! docker push "$KAFKA_IMAGE"; then
-  echo "Error: Failed to push. Log in with: docker login ghcr.io"
-  echo "Use a GitHub PAT with read:packages and write:packages."
-  exit 1
-fi
-
-echo "Pushed $KAFKA_IMAGE successfully."
-echo "Users can run setup_inkless.sh (with KAFKA_IMAGE=$KAFKA_IMAGE if different from default) to deploy."
+echo "Multi-arch image pushed: $MULTI_ARCH_IMAGE"
+echo "Users can run setup_inkless.sh (with KAFKA_IMAGE=$MULTI_ARCH_IMAGE if different from default) to deploy."

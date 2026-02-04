@@ -42,20 +42,22 @@ fi
 
 if [ -z "$DATA_DIR" ]; then
     echo "No data directory provided, using the default /tmp/inkless-data"
-    DATA_DIR="inkless-data"
+    DATA_DIR="/tmp/inkless-data"
 else
     echo "Provided data directory is: $DATA_DIR, using it for MinIO and Kafka data."
 fi
 
 # Kernel machine type: x86_64, aarch64, arm64, armv7l, etc.
-case "$(uname -m)" in
-  x86_64|amd64)   ARCHITECTURE=amd64 ;;
-  aarch64|arm64)  ARCHITECTURE=arm64 ;;
-  *)              echo "Error: Unsupported architecture: $(uname -m)" && exit 1 ;;
-esac
+if [ -z "$ARCHITECTURE" ]; then
+  case "$(uname -m)" in
+    x86_64|amd64)   ARCHITECTURE=amd64 ;;
+    aarch64|arm64)  ARCHITECTURE=arm64 ;;
+    *)              echo "Error: Unsupported architecture: $(uname -m)" && exit 1 ;;
+  esac
+fi
 
-# Kafka image: pulled from GHCR when installing (see DEVELOPMENT.md to build and push your own).
-KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:4.1.1-0.34-${ARCHITECTURE}}"
+# Kafka image: multi-arch tag so the right image is pulled for amd64/arm64 (see DEVELOPMENT.md to build and push your own).
+KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:4.1.1-0.34}"
 
 if [ -z "$KUBECONFIG" ]; then
     echo "Error: KUBECONFIG environment variable is not set."
