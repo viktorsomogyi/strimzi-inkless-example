@@ -235,3 +235,7 @@ install_kafka
 if [[ -n "$IP_ADDRESS" && -n "$EMAIL_ADDRESS" ]]; then
   install_https $IP_ADDRESS $EMAIL_ADDRESS
 fi
+
+echo "Inkless setup complete. Access Grafana at https://grafana.$IP_ADDRESS.nip.io"
+echo "Username: admin"
+echo "Password: $(kubectl get secret -n monitoring prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo)
