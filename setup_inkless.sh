@@ -26,28 +26,25 @@ function require_kube_access() {
     fi
 }
 
-if [ -z "$1" ]; then
+if [ -z "$IP_ADDRESS" ]; then
     echo "No IP address provided, won't set up nip.io access."
 else
-    echo "Provided IP address is: $1, will set up nip.io access on https://grafana.$1.nip.io if email address is also provided."
+    echo "Provided IP address is: $IP_ADDRESS, will set up nip.io access on https://grafana.$IP_ADDRESS.nip.io if email address is also provided."
     echo "This only works on Google Cloud and only if HTTP and HTTPS have been enabled."
-    IP_ADDRESS=$1
 fi
 
-if [ -z "$2" ]; then
+if [ -z "$EMAIL_ADDRESS" ]; then
     echo "No email address provided, won't set up nip.io access."
 else
-    echo "Provided email address is: $2, will set up nip.io access on https://grafana.$1.nip.io"
+    echo "Provided email address is: $EMAIL_ADDRESS, will set up nip.io access on https://grafana.$IP_ADDRESS.nip.io"
     echo "This only works on Google Cloud and only if HTTP and HTTPS have been enabled."
-    EMAIL_ADDRESS=$2
 fi
 
-if [ -z "$3" ]; then
+if [ -z "$DATA_DIR" ]; then
     echo "No data directory provided, using the default /tmp/inkless-data"
-    DATA_DIR="/tmp/inkless-data"
+    DATA_DIR="inkless-data"
 else
-    echo "Provided data directory is: $3, using it for MinIO and Kafka data."
-    DATA_DIR=$3
+    echo "Provided data directory is: $DATA_DIR, using it for MinIO and Kafka data."
 fi
 
 # Kernel machine type: x86_64, aarch64, arm64, armv7l, etc.
@@ -138,7 +135,8 @@ function install_minio() {
 
   # Read the template and replace placeholders
   TEMP_PVC_FILE=$(mktemp)
-  sed "s|__DATA_DIR__|$DATA_DIR|g; s|__HOSTNAME__|$(hostname)|g" minio-pvc-template.yaml > "$TEMP_PVC_FILE"
+  NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+  sed "s|__DATA_DIR__|$DATA_DIR|g; s|__HOSTNAME__|$NODE_NAME|g" minio-pvc-template.yaml > "$TEMP_PVC_FILE"
 
   kubectl create namespace minio
 

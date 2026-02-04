@@ -59,6 +59,8 @@ After a successful push, anyone can deploy using that image:
 KAFKA_IMAGE=ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.0.0 ./setup_inkless.sh
 ```
 
+To remove the deployment (e.g. before re-deploying with a new image), use the uninstall script from the repo root: `./uninstall_inkless.sh` (see [README – Uninstall](README.md#uninstall-cleanup)).
+
 ## Default Image
 
 The default image reference used by both scripts is:

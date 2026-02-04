@@ -2,7 +2,7 @@
 
 A complete demonstration of **Aiven's Inkless** (a KIP-1150 implementation) running on a **Strimzi Kafka cluster** with CPU-based elastic autoscaling. This project showcases how to deploy a diskless Kafka cluster that uses S3-compatible storage (MinIO) instead of local disk, enabling true stateless Kafka brokers that can scale horizontally based on CPU utilization.
 
-**Deploying**: Run the setup script; the Kafka image is pulled from GHCR (no build required). **Building the image**: See [DEVELOPMENT.md](DEVELOPMENT.md).
+**Deploying**: Run the setup script; the Kafka image is pulled from GHCR (no build required). **Uninstalling**: Run `./uninstall_inkless.sh` to remove everything the setup installed. **Building the image**: See [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ## Overview
 
@@ -114,10 +114,10 @@ Examples:
 ./setup_inkless.sh
 
 # Custom data directory only
-./setup_inkless.sh "" "" /var/lib/inkless-data
+DATA_DIR=/var/lib/inkless-data ./setup_inkless.sh
 
 # Enable HTTPS for Grafana (Google Cloud + HTTP/HTTPS enabled)
-./setup_inkless.sh <YOUR_IP_ADDRESS> <YOUR_EMAIL_ADDRESS>
+IP_ADDRESS=<YOUR_IP_ADDRESS> EMAIL_ADDRESS=<YOUR_EMAIL_ADDRESS> ./setup_inkless.sh
 ```
 
 ## Default credentials (and how to extract them)
@@ -197,6 +197,7 @@ This will:
 ├── DEVELOPMENT.md                # Building and publishing the Kafka image
 ├── setup_k3s.sh                  # K3s and Helm setup script
 ├── setup_inkless.sh              # Deploy Inkless + dependencies + Kafka (install only, no build)
+├── uninstall_inkless.sh         # Remove all components installed by setup_inkless.sh
 ├── build_and_push_kafka_image.sh # Build and push Kafka image to GHCR (see DEVELOPMENT.md)
 ├── setup_debian_bookworm.sh      # Dev prerequisites (Java, Docker, Maven, etc.)
 ├── kafka.yaml                    # Kafka cluster configuration
@@ -353,40 +354,43 @@ kubectl exec -n minio deploy/minio -- mc ls local/inkless-bucket
 kubectl exec -n kafka -it $(kubectl get pod -n kafka -l app.kubernetes.io/name=postgresql -o jsonpath='{.items[0].metadata.name}') -- psql -U inkless-username -d inkless-db
 ```
 
-## Cleanup
+## Uninstall (cleanup)
 
-To remove all components:
-
-```bash
-# Remove Kafka resources (use same KAFKA_IMAGE as at install for kafka.yaml; jobs are deleted by name)
-KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.0.0}"
-kubectl delete job -n kafka kafka-producer kafka-consumer kafka-consumer2 --ignore-not-found
-kubectl delete -f load-test-topic.yaml -n kafka
-sed "s|__KAFKA_IMAGE__|$KAFKA_IMAGE|g" kafka.yaml | kubectl delete -f - -n kafka
-kubectl delete -f hpa.yaml -n kafka
-kubectl delete -f pod-monitor.yaml -n kafka
-kubectl delete -f cc-rebalance.yaml -n kafka
-
-# Remove Grafana dashboard ConfigMap (optional)
-kubectl delete -f grafana-dashboard-config.yaml
-
-# Remove Helm releases
-helm uninstall strimzi-operator -n strimzi
-helm uninstall minio -n minio
-helm uninstall prometheus-stack -n monitoring
-helm uninstall inkless-postgres -n kafka
-
-# Remove namespaces
-kubectl delete namespace kafka strimzi minio monitoring
-```
-
-If you enabled HTTPS via `setup_inkless.sh <IP> <EMAIL>`, you may also want to remove cert-manager and the ClusterIssuer:
+Use the uninstall script to remove everything installed by `setup_inkless.sh` in the correct order (Kafka resources first, then Strimzi, PostgreSQL, monitoring, MinIO, and namespaces):
 
 ```bash
-kubectl delete ingress -n monitoring grafana-ingress
-kubectl delete clusterissuer letsencrypt-prod
-kubectl delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+export KUBECONFIG=/path/to/kubeconfig   # e.g. /etc/rancher/k3s/k3s.yaml
+
+# Full uninstall
+./uninstall_inkless.sh
 ```
+
+**Options:**
+
+- **DATA_DIR** (environment variable): Data directory used at install time (e.g. `/tmp/inkless-data`). If set, the script also removes the MinIO host path `$DATA_DIR/minio`.
+- **`--remove-https`**: Also remove cert-manager, the Let's Encrypt ClusterIssuer, and the Grafana Ingress (use this if you ran setup with IP + email for HTTPS).
+- **`--remove-load-test`**: Also remove the load-test topic and kafka-clients Jobs (use if you applied `load-test-topic.yaml` and `kafka-clients.yaml`).
+
+**Examples:**
+
+```bash
+# Default uninstall
+./uninstall_inkless.sh
+
+# Also remove HTTPS resources (cert-manager, Grafana ingress)
+./uninstall_inkless.sh --remove-https
+
+# Also remove load-test topic and producer/consumer jobs
+./uninstall_inkless.sh --remove-load-test
+
+# Also remove MinIO data on the host (same path you used for setup_inkless.sh)
+DATA_DIR=/tmp/inkless-data ./uninstall_inkless.sh
+
+# Combine options
+DATA_DIR=/tmp/inkless-data ./uninstall_inkless.sh --remove-https --remove-load-test
+```
+
+The script uses `--ignore-not-found` so missing resources do not cause errors. Helm repos (Strimzi, MinIO, Prometheus, Bitnami) are left in place; remove them manually if desired: `helm repo remove strimzi minio prometheus-community bitnami`.
 
 ## References
 
