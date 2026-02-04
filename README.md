@@ -248,8 +248,8 @@ The Kafka cluster is configured with:
 To start load testing and observe autoscaling in action, use the same Kafka image as the cluster (manifests use a placeholder; the script substitutes it when applying):
 
 ```bash
-# Use the same KAFKA_IMAGE as at install time (default: ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.0.0)
-KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.0.0}"
+# Use the same KAFKA_IMAGE as at install time (default: ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.1.1)
+KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.1.1}"
 kubectl apply -f load-test-topic.yaml -n kafka
 sed "s|__KAFKA_IMAGE__|$KAFKA_IMAGE|g" kafka-clients.yaml | kubectl apply -f - -n kafka
 ```
