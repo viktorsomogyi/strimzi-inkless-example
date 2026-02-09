@@ -234,8 +234,20 @@ install_kafka
 
 if [[ -n "$IP_ADDRESS" && -n "$EMAIL_ADDRESS" ]]; then
   install_https $IP_ADDRESS $EMAIL_ADDRESS
+  echo "Inkless setup complete. Access Grafana at https://grafana.$IP_ADDRESS.nip.io"
 fi
 
-echo "Inkless setup complete. Access Grafana at https://grafana.$IP_ADDRESS.nip.io"
-echo "Username: admin"
-echo "Password: $(kubectl get secret -n monitoring prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo)
+echo "--------------------------------"
+echo "Grafana username: admin"
+echo "Grafana password: $(kubectl get secret -n monitoring prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo)"
+echo "Port-forward Grafana to localhost:3000: kubectl port-forward -n monitoring svc/prometheus-stack-grafana 3000:80"
+echo "Port-forward Prometheus to localhost:9090: kubectl port-forward -n monitoring svc/prometheus-stack-kube-prom-prometheus 9090:9090"
+echo "--------------------------------"
+echo "MinIO username: admin"
+echo "MinIO password: $(kubectl get secret -n minio minio -o jsonpath='{.data.rootPassword}' | base64 -d; echo)"
+echo "Port-forward MinIO console to localhost:9001: kubectl port-forward -n minio svc/minio 9001:9001"
+echo "--------------------------------"
+echo "Postgres username: inkless-username"
+echo "Postgres password: $(kubectl get secret -n kafka inkless-postgres-postgresql -o jsonpath='{.data.postgres-password}' | base64 -d; echo)"
+echo "Port-forward Postgres to localhost:5432: kubectl port-forward -n kafka svc/inkless-postgres-postgresql 5432:5432"
+echo "--------------------------------"
