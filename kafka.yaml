@@ -102,7 +102,7 @@ spec:
       monitor.state.update.interval.ms: 10000
       cruise.control.metrics.reporter.metrics.reporting.interval.ms: 5000
       # Set this to match or be slightly lower than your HPA target
-      cpu.capacity.threshold: "0.2"
+      cpu.capacity.threshold: "0.8"
       cpu.usage.distribution.threshold: "1.2"
       # Ensures CC prioritizes moving replicas to empty brokers
       replica.count.balance.threshold: "1.1"
