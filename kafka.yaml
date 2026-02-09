@@ -20,14 +20,14 @@ metadata:
     strimzi.io/cluster: inkless-cluster
 spec:
   roles: ["broker"]
-  replicas: 3
+  replicas: 9
   resources:
     requests:
-      memory: 2Gi
+      memory: 48Gi
       cpu: 500m
     limits:
-      memory: 2Gi
-      cpu: "1"
+      memory: 48Gi
+      cpu: "2"
   storage:
     type: ephemeral
 
@@ -82,8 +82,8 @@ spec:
   cruiseControl:
     brokerCapacity:
       cpu: "500m"
-      inboundNetwork: "10000KiB/s"
-      outboundNetwork: "10000KiB/s"
+      inboundNetwork: "1000000KiB/s"
+      outboundNetwork: "1000000KiB/s"
     resources:
       requests:
         memory: 1Gi
@@ -92,6 +92,7 @@ spec:
         memory: 1Gi
         cpu: 1000m
     config:
+      min.valid.partition.ratio: 0.3
       max.active.user.tasks: 10
       metric.sampling.interval.ms: 5000
       metadata.max.age.ms: 5000

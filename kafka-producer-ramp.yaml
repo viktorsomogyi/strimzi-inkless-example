@@ -1,0 +1,81 @@
+# Producer ramp-up: 40 producer pods, each starts after (index * 1 minute) delay.
+# Pod 0 starts immediately, pod 1 after 1 min, ... pod 39 after 39 min → 1 to 40 producers over 39 minutes.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app: kafka-producer-ramp
+  name: kafka-producer-ramp
+spec:
+  completionMode: Indexed
+  completions: 40
+  parallelism: 40
+  backoffLimit: 100
+  template:
+    metadata:
+      name: kafka-producer-ramp
+      labels:
+        app: kafka-producer-ramp
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: kafka-producer
+        image: __KAFKA_IMAGE__
+        command: [ "/bin/sh", "-c" ]
+        args:
+        - |
+          delay=$((JOB_COMPLETION_INDEX * 60))
+          echo "Producer index ${JOB_COMPLETION_INDEX}: waiting ${delay}s before starting..."
+          sleep "$delay"
+          exec bin/kafka-producer-perf-test.sh \
+            --topic load-test \
+            --throughput 1000000000 \
+            --num-records 10000000000 \
+            --producer-props "acks=all" "bootstrap.servers=inkless-cluster-kafka-bootstrap:9092" "linger.ms=100" "batch.size=1000000" "buffer.memory=128000000" "max.request.size=64000000" \
+            --record-size 1000
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app: kafka-consumer
+  name: kafka-consumer
+spec:
+  parallelism: 20
+  completions: 20
+  backoffLimit: 100
+  template:
+    metadata:
+      name: kafka-consumer
+      labels:
+        app: kafka-consumer
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: kafka-consumer
+        image: __KAFKA_IMAGE__
+        command: [ "/bin/sh" ]
+        args: [ "-c", "echo \"group.id=load-group-1\" >> /tmp/consumer.config; bin/kafka-consumer-perf-test.sh --topic load-test --messages 100000000000 --bootstrap-server inkless-cluster-kafka-bootstrap:9092 --show-detailed-stats --timeout 300000 --group load-consumer --consumer.config /tmp/consumer.config" ]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  labels:
+    app: kafka-consumer2
+  name: kafka-consumer2
+spec:
+  parallelism: 20
+  completions: 20
+  backoffLimit: 100
+  template:
+    metadata:
+      name: kafka-consumer2
+      labels:
+        app: kafka-consumer2
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: kafka-consumer
+        image: __KAFKA_IMAGE__
+        command: [ "/bin/sh" ]
+        args: [ "-c", "echo \"group.id=load-group-2\" > /tmp/consumer.config; bin/kafka-consumer-perf-test.sh --topic load-test --messages 100000000000 --bootstrap-server inkless-cluster-kafka-bootstrap:9092 --show-detailed-stats --timeout 300000 --group load-consumer2 --consumer.config /tmp/consumer.config" ]

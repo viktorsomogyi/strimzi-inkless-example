@@ -21,7 +21,7 @@ The deployment consists of:
 
 - **Kafka Cluster** (`inkless-cluster`): 
   - 3 controller nodes (KRaft controllers)
-  - 3-9 broker nodes (scales automatically based on CPU)
+  - 3–12 broker nodes (scales automatically based on CPU)
   - Controllers and brokers use **ephemeral** Kubernetes storage (no local disks on brokers)
   - Configured with Inkless storage backend pointing to MinIO S3
   
@@ -35,7 +35,7 @@ The deployment consists of:
   - **Kafka Exporter**: Kafka-specific metrics
   
 - **Autoscaling**:
-  - **HPA**: Scales broker pool from 3 to 9 replicas based on CPU utilization (target: 30%)
+  - **HPA**: Scales broker pool from 3 to 12 replicas based on CPU utilization (target: 80%)
   - **Cruise Control**: Automatically rebalances partitions when brokers scale up/down
 
 ## Prerequisites
@@ -53,8 +53,8 @@ The Kafka image is **pre-built** and pulled from GitHub Container Registry (GHCR
 ### Assumptions
 
 - **Run from the repo root**: `setup_inkless.sh` uses `$(pwd)` as the repo directory.
-- **Single-node local PV for MinIO**: MinIO uses a **local** `PersistentVolume` with `nodeAffinity` to the node hostname (see `minio-pvc-template.yaml`). On multi-node clusters, adapt PV/PVC/storage as needed.
-- **Kafka image**: Default `ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.0.0`. Override with `KAFKA_IMAGE` if you use a different tag. For a private image, configure imagePullSecrets so the cluster can pull.
+- **Single-node local PV for MinIO**: MinIO uses a **local** `PersistentVolume` with `nodeAffinity` to the node hostname (see `minio-local-pvc-template.yaml`). On multi-node clusters, adapt PV/PVC/storage as needed.
+- **Kafka image**: Default `ghcr.io/viktorsomogyi/strimzi-inkless:4.1.1-0.34`. Override with `KAFKA_IMAGE` if you use a different tag. For a private image, configure imagePullSecrets so the cluster can pull.
 
 ## Installation
 
@@ -95,17 +95,16 @@ This will:
 5. Deploy Prometheus and Grafana monitoring stack
 6. Install the Strimzi Kafka Operator and deploy the Kafka cluster (pulling the Kafka image from GHCR), HPA, PodMonitor, and Cruise Control auto-rebalance template
 
-#### Script arguments
+#### Environment variables
 
-`setup_inkless.sh` supports optional arguments in this order:
+`setup_inkless.sh` uses **environment variables** (no positional arguments):
 
-- **arg1**: Public IP address (used only for optional Grafana HTTPS via `nip.io`)
-- **arg2**: Email address (used for Let’s Encrypt / cert-manager)
-- **arg3**: Host data directory for the **MinIO local PV** (default: `/tmp/inkless-data`)
+- **IP_ADDRESS**: Public IP address (used only for optional Grafana HTTPS via `nip.io`)
+- **EMAIL_ADDRESS**: Email address (used for Let’s Encrypt / cert-manager)
+- **DATA_DIR**: Host data directory for the **MinIO local PV** (default: `/tmp/inkless-data`)
 
-Environment:
-
-- **KAFKA_IMAGE**: Kafka image to use (default: `ghcr.io/viktorsomogyi/strimzi-inkless:inkless-4.0.0`). The cluster and load-test jobs pull this image. Override if you use a different tag or registry (e.g. after building locally; see [DEVELOPMENT.md](DEVELOPMENT.md)).
+- **KAFKA_IMAGE**: Kafka image to use (default: `ghcr.io/viktorsomogyi/strimzi-inkless:4.1.1-0.34`). The cluster and load-test jobs use this image. Override if you use a different tag or registry (e.g. after building locally; see [DEVELOPMENT.md](DEVELOPMENT.md)).
+- **KUBERNETES_SERVICE**: Set to `local` (default) or `gke`; controls MinIO storage (local PV vs `premium-rwo`).
 
 Examples:
 
@@ -120,6 +119,8 @@ DATA_DIR=/var/lib/inkless-data ./setup_inkless.sh
 IP_ADDRESS=<YOUR_IP_ADDRESS> EMAIL_ADDRESS=<YOUR_EMAIL_ADDRESS> ./setup_inkless.sh
 ```
 
+**Note**: The script does **not** start load testing by default. To run load tests, see [Load Testing](#load-testing) below.
+
 ## Default credentials (and how to extract them)
 
 This repo uses **static defaults** in the scripts/values files (meant for demos). After installing, you can also **read them from Kubernetes Secrets**.
@@ -127,7 +128,7 @@ This repo uses **static defaults** in the scripts/values files (meant for demos)
 ### MinIO (S3 backend)
 
 - **Namespace / release**: `minio` / `minio`
-- **Default**: user `admin`, password `password123` (see `minio-helm.yaml`)
+- **Default**: user `admin`, password `password123` (see `minio-helm-template.yaml`)
 
 Extract from Kubernetes:
 
@@ -140,8 +141,8 @@ kubectl get secret -n minio minio -o jsonpath='{.data.rootPassword}' | base64 -d
 
 - **Namespace / release**: `kafka` / `inkless-postgres`
 - **Default Inkless DB user**: `inkless-username`
-- **Default Inkless DB password**: `mysecretpassword` (set in `setup_inkless.sh`)
-- **Default `postgres` (admin) password**: `admin-password` (set in `setup_inkless.sh`)
+- **Default Inkless DB password**: `mysecretpassword` (set in `postgres-helm.yaml`)
+- **Default `postgres` (admin) password**: `admin-password` (set in `postgres-helm.yaml`)
 
 Extract from Kubernetes:
 
@@ -197,18 +198,21 @@ This will:
 ├── DEVELOPMENT.md                # Building and publishing the Kafka image
 ├── setup_k3s.sh                  # K3s and Helm setup script
 ├── setup_inkless.sh              # Deploy Inkless + dependencies + Kafka (install only, no build)
-├── uninstall_inkless.sh         # Remove all components installed by setup_inkless.sh
+├── uninstall_inkless.sh          # Remove all components installed by setup_inkless.sh
 ├── build_and_push_kafka_image.sh # Build and push Kafka image to GHCR (see DEVELOPMENT.md)
 ├── setup_debian_bookworm.sh      # Dev prerequisites (Java, Docker, Maven, etc.)
 ├── kafka.yaml                    # Kafka cluster configuration
 ├── hpa.yaml                      # Horizontal Pod Autoscaler configuration
-├── kafka-clients.yaml            # Load testing producer/consumer jobs
+├── kafka-clients.yaml            # Load testing producer/consumer jobs (all start at once)
+├── kafka-producer-ramp.yaml      # Alternative load test: producers ramp over time + consumers
 ├── load-test-topic.yaml          # Test topic with diskless configuration
 ├── cc-rebalance.yaml             # Cruise Control rebalancing templates
 ├── pod-monitor.yaml              # Prometheus PodMonitor for Kafka metrics
-├── minio-helm.yaml               # MinIO Helm chart values
-├── minio-pvc-template.yaml       # MinIO persistent volume claim template
-├── minio-sc.yaml                 # MinIO storage class
+├── minio-helm-template.yaml      # MinIO Helm chart values (__STORAGE_CLASS__ placeholder)
+├── minio-local-pvc-template.yaml # MinIO local PV template (__DATA_DIR__, __HOSTNAME__)
+├── minio-local-sc.yaml           # MinIO local storage class
+├── postgres-helm.yaml            # PostgreSQL Helm values (Inkless control plane)
+├── postgres-pod-monitor.yaml     # Prometheus PodMonitor for PostgreSQL
 ├── monitoring-helm.yaml          # Prometheus/Grafana Helm chart values
 ├── grafana-dashboard-config.yaml # Kafka dashboard ConfigMap for Grafana sidecar (installed by setup_inkless.sh)
 ├── grafana-ingress-template.yaml # Grafana ingress template (for HTTPS)
@@ -221,19 +225,19 @@ This will:
 
 The Kafka cluster is configured with:
 
-- **Version**: 4.0.0 (with Inkless)
+- **Version**: 4.1.1 (with Inkless)
 - **Storage**: Diskless mode enabled with S3 backend
 - **Listeners**: 
   - Internal listener on port 9092 (cluster-internal)
   - External NodePort listener on port 32094 (for external clients)
-- **KRaft**: Enabled with metadata version 4.0-IV0
+- **KRaft**: Enabled with metadata version 4.1-IV0
 - **Node Pools**: Separate pools for controllers and brokers
 
 ### Autoscaling Configuration
 
 - **Min Replicas**: 3 brokers
-- **Max Replicas**: 9 brokers
-- **Target CPU Utilization**: 30%
+- **Max Replicas**: 12 brokers
+- **Target CPU Utilization**: 80%
 - **Scale Up/Down**: 1 pod per 60 seconds
 
 ### Storage Configuration
@@ -241,29 +245,43 @@ The Kafka cluster is configured with:
 - **Backend**: MinIO S3-compatible storage
 - **Bucket**: `inkless-bucket`
 - **Control Plane**: PostgreSQL database for metadata
-- **MinIO persistence**: A local PersistentVolume at `<DATA_DIR>/minio` on the Kubernetes node (default: `/tmp/inkless-data/minio`). Override `<DATA_DIR>` via the 3rd argument to `setup_inkless.sh`.
+- **MinIO persistence**: A local PersistentVolume at `$DATA_DIR/minio` on the Kubernetes node (default: `/tmp/inkless-data/minio`). Override via the `DATA_DIR` environment variable when running `setup_inkless.sh`.
 
 ## Load Testing
 
-To start load testing and observe autoscaling in action, use the same Kafka image as the cluster (manifests use a placeholder; the script substitutes it when applying):
+Load testing is **not** started by `setup_inkless.sh`. To run it manually, create the topic and apply one of the client manifests. Use the same `KAFKA_IMAGE` as at install time (default: `ghcr.io/viktorsomogyi/strimzi-inkless:4.1.1-0.34`).
+
+**Option A – burst load** (`kafka-clients.yaml`): all producers and consumers start at once:
 
 ```bash
-# Use the same KAFKA_IMAGE as at install time (default: ghcr.io/viktorsomogyi/strimzi-inkless:4.1.1-0.34)
-KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:4.1.1-0.34}"
 kubectl apply -f load-test-topic.yaml -n kafka
+KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:4.1.1-0.34}"
 sed "s|__KAFKA_IMAGE__|$KAFKA_IMAGE|g" kafka-clients.yaml | kubectl apply -f - -n kafka
+```
+
+**Option B – ramp load** (`kafka-producer-ramp.yaml`): 40 producers start one per minute (pod 0 immediately, pod 1 after 1 min, …), plus 20 consumers per group; useful to observe gradual scale-up:
+
+```bash
+kubectl apply -f load-test-topic.yaml -n kafka
+KAFKA_IMAGE="${KAFKA_IMAGE:-ghcr.io/viktorsomogyi/strimzi-inkless:4.1.1-0.34}"
+sed "s|__KAFKA_IMAGE__|$KAFKA_IMAGE|g" kafka-producer-ramp.yaml | kubectl apply -f - -n kafka
 ```
 
 This creates:
 - A test topic (`load-test`) with 100 partitions configured for diskless storage
-- Multiple producer and consumer **Jobs** that generate significant load (they run until completion or failure)
+- **Jobs** that generate load (producers and consumers); they run until completion or failure
 
-If you want to re-run the jobs, delete them first:
+To re-run, delete the jobs first:
 
 ```bash
+# For kafka-clients.yaml
 kubectl delete job -n kafka kafka-producer kafka-consumer kafka-consumer2
-sed "s|__KAFKA_IMAGE__|$KAFKA_IMAGE|g" kafka-clients.yaml | kubectl apply -f - -n kafka
+
+# For kafka-producer-ramp.yaml (also delete kafka-clients jobs if you ran both)
+kubectl delete job -n kafka kafka-producer-ramp kafka-consumer kafka-consumer2
 ```
+
+Then re-apply the chosen manifest with `sed` as above. The uninstall script’s `--remove-load-test` option only removes resources created from `load-test-topic.yaml` and `kafka-clients.yaml`; delete `kafka-producer-ramp` (and any other load-test jobs) manually if needed.
 
 Watch the broker pool scale up as CPU utilization increases:
 
@@ -310,7 +328,7 @@ The monitoring stack collects:
 
 2. **Autoscaling**: 
    - HPA monitors CPU utilization of broker pods
-   - When CPU exceeds 30%, HPA scales up the broker pool
+   - When CPU exceeds 80%, HPA scales up the broker pool
    - Cruise Control detects new brokers and rebalances partitions
    - When CPU drops, HPA scales down and Cruise Control moves partitions off removed brokers
 
@@ -369,7 +387,7 @@ export KUBECONFIG=/path/to/kubeconfig   # e.g. /etc/rancher/k3s/k3s.yaml
 
 - **DATA_DIR** (environment variable): Data directory used at install time (e.g. `/tmp/inkless-data`). If set, the script also removes the MinIO host path `$DATA_DIR/minio`.
 - **`--remove-https`**: Also remove cert-manager, the Let's Encrypt ClusterIssuer, and the Grafana Ingress (use this if you ran setup with IP + email for HTTPS).
-- **`--remove-load-test`**: Also remove the load-test topic and kafka-clients Jobs (use if you applied `load-test-topic.yaml` and `kafka-clients.yaml`).
+- **`--remove-load-test`**: Also remove the load-test topic and the Jobs from `kafka-clients.yaml`. Does not remove Jobs from `kafka-producer-ramp.yaml`; delete those manually if present.
 
 **Examples:**
 
