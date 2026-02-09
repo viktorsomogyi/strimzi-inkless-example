@@ -4,7 +4,7 @@ metadata:
   name: minio-local-pv
 spec:
   capacity:
-    storage: 50Gi
+    storage: 800Gi
   volumeMode: Filesystem
   accessModes:
   - ReadWriteOnce

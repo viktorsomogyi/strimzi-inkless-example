@@ -2,8 +2,8 @@ mode: standalone
 
 persistence:
   enabled: true
-  storageClass: "minio-local-storage"
-  size: 50Gi
+  storageClass: "__STORAGE_CLASS__"
+  size: 500Gi
 
 resources:
   requests:

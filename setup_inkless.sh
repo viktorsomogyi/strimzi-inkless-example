@@ -47,13 +47,11 @@ else
     echo "Provided data directory is: $DATA_DIR, using it for MinIO and Kafka data."
 fi
 
-# Kernel machine type: x86_64, aarch64, arm64, armv7l, etc.
-if [ -z "$ARCHITECTURE" ]; then
-  case "$(uname -m)" in
-    x86_64|amd64)   ARCHITECTURE=amd64 ;;
-    aarch64|arm64)  ARCHITECTURE=arm64 ;;
-    *)              echo "Error: Unsupported architecture: $(uname -m)" && exit 1 ;;
-  esac
+KUBERNETES_SERVICE=${KUBERNETES_SERVICE:-local}
+if [ "$KUBERNETES_SERVICE" != "local" ] && [ "$KUBERNETES_SERVICE" != "gke" ]; then
+    echo "Error: Unsupported Kubernetes service: $KUBERNETES_SERVICE"
+    echo "Supported services: local, gke"
+    exit 1
 fi
 
 # Kafka image: multi-arch tag so the right image is pulled for amd64/arm64 (see DEVELOPMENT.md to build and push your own).
@@ -67,6 +65,16 @@ if [ ! -r "$KUBECONFIG" ]; then
     echo "Error: KUBECONFIG points to a missing/unreadable file: $KUBECONFIG"
     exit 1
 fi
+
+echo "--------------------------------"
+echo "Environment variables:"
+echo "KUBERNETES_SERVICE: $KUBERNETES_SERVICE"
+echo "KAFKA_IMAGE: $KAFKA_IMAGE"
+echo "KUBECONFIG: $KUBECONFIG"
+echo "DATA_DIR: $DATA_DIR"
+echo "IP_ADDRESS: $IP_ADDRESS"
+echo "EMAIL_ADDRESS: $EMAIL_ADDRESS"
+echo "--------------------------------"
 
 require_cmd helm
 require_cmd jq
@@ -133,21 +141,32 @@ function install_minio() {
 
   cd $SCRIPT_DIR
 
-  mkdir -p $DATA_DIR/minio
-
-  # Read the template and replace placeholders
-  TEMP_PVC_FILE=$(mktemp)
-  NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
-  sed "s|__DATA_DIR__|$DATA_DIR|g; s|__HOSTNAME__|$NODE_NAME|g" minio-pvc-template.yaml > "$TEMP_PVC_FILE"
-
   kubectl create namespace minio
 
-  kubectl apply -f minio-sc.yaml -n "minio"
-  kubectl apply -f "$TEMP_PVC_FILE" -n "minio"
-  
-  rm -f "$TEMP_PVC_FILE"
+  if [ "$KUBERNETES_SERVICE" == "local" ]; then
+    mkdir -p $DATA_DIR/minio
 
-  install_helm_package "minio" "minio" "minio/minio" -f "minio-helm.yaml"
+    # Read the template and replace placeholders
+    TEMP_PVC_FILE=$(mktemp)
+    NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
+    sed "s|__DATA_DIR__|$DATA_DIR|g; s|__HOSTNAME__|$NODE_NAME|g" minio-local-pvc-template.yaml > "$TEMP_PVC_FILE"
+
+    kubectl apply -f minio-local-sc.yaml -n "minio"
+    kubectl apply -f "$TEMP_PVC_FILE" -n "minio"
+
+    rm -f "$TEMP_PVC_FILE"
+    TEMP_HELM_FILE=$(mktemp)
+    sed "s|__STORAGE_CLASS__|minio-local-storage|g" minio-helm-template.yaml > "$TEMP_HELM_FILE"
+    install_helm_package "minio" "minio" "minio/minio" -f "$TEMP_HELM_FILE"
+    rm -f "$TEMP_HELM_FILE"
+  elif [ "$KUBERNETES_SERVICE" == "gke" ]; then
+    TEMP_HELM_FILE=$(mktemp)
+    sed "s|__STORAGE_CLASS__|premium-rwo|g" minio-helm-template.yaml > "$TEMP_HELM_FILE"
+    install_helm_package "minio" "minio" "minio/minio" -f "$TEMP_HELM_FILE"
+    rm -f "$TEMP_HELM_FILE"
+  else
+    exit 1
+  fi
 
   kubectl exec -n minio deploy/minio -- /bin/sh -c "mc alias set local http://localhost:9000 admin password123 && \
  mc mb local/inkless-bucket"
