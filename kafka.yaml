@@ -42,9 +42,9 @@ metadata:
     strimzi.io/node-pools: enabled
 spec:
   kafka:
-    version: 4.0.0
+    version: 4.1.1
     image: __KAFKA_IMAGE__
-    metadataVersion: 4.0-IV0
+    metadataVersion: 4.1-IV0
     listeners:
       - name: plain
         port: 9092
@@ -306,3 +306,18 @@ data:
     - pattern: "kafka.server<type=broker-metadata-metrics><>(.+):"
       name: kafka_server_brokermetadatametrics_$1
       type: GAUGE
+    # Inkless
+    - pattern: io.aiven.inkless.(\w+)<type=(.+), name=(.+)><>(\d+)thPercentile
+      name: kafka_inkless_$1_$2_$3
+      type: GAUGE
+      labels:
+        quantile: "0.$4"
+    - pattern: io.aiven.inkless.(\w+)<type=(.+), name=(.+)><>(Count|Value)
+      name: kafka_inkless_$1_$2_$3_$4
+    - pattern: io.aiven.inkless.control_plane.postgres<type=(.+), name=(.+)><>(\d+)thPercentile
+      name: kafka_inkless_controlplane_$1_$2
+      type: GAUGE
+      labels:
+        quantile: "0.$3"
+    - pattern: io.aiven.inkless.control_plane.postgres<type=(.+), name=(.+)><>(Count|Value)
+      name: kafka_inkless_controlplane_$1_$2
