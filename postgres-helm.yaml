@@ -11,13 +11,16 @@ primary:
     size: "10Gi"
   resources:
     limits:
-      memory: "2Gi"
+      memory: "16Gi"
     requests:
-      memory: "1Gi"
+      memory: "8Gi"
   shmVolume:
     enabled: true
-  extraFlags:
-    - "--shared_buffers=512MB"
-    - "--work_mem=16MB"
+  extendedConfiguration: |
+    max_connections = 1500
+    shared_buffers = 4GB
+    work_mem = 8MB
+    max_wal_size = 4GB
+    idle_in_transaction_session_timeout = 60000
 metrics:
   enabled: true

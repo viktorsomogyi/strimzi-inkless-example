@@ -188,6 +188,7 @@ function install_https() {
 function install_postgres() {
   install_helm_package "kafka" "inkless-postgres" "bitnami/postgresql" \
     -f postgres-helm.yaml
+  kubectl apply -f postgres-pod-monitor.yaml -n kafka
 
   echo "Installed Postgres"
 }

@@ -123,6 +123,7 @@ helm uninstall strimzi-operator -n strimzi --wait --timeout=5m 2>/dev/null || tr
 # --- PostgreSQL ---
 echo "Uninstalling PostgreSQL (inkless-postgres)..."
 helm uninstall inkless-postgres -n kafka --wait --timeout=5m 2>/dev/null || true
+kubectl delete -f postgres-pod-monitor.yaml -n kafka --ignore-not-found --timeout=30s 2>/dev/null || true
 
 # --- Monitoring stack ---
 echo "Removing Grafana dashboard config and Prometheus stack..."

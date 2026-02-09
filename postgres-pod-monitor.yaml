@@ -1,0 +1,16 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: inkless-postgres-monitor
+  namespace: kafka
+  labels:
+    release: prometheus-stack # Ensures the Prometheus Operator sees it
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+      app.kubernetes.io/instance: inkless-postgres
+  podMetricsEndpoints:
+  - port: http-metrics
+    interval: 30s
+    path: /metrics
