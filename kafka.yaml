@@ -82,8 +82,8 @@ spec:
   cruiseControl:
     brokerCapacity:
       cpu: "500m"
-      inboundNetwork: "1000000KiB/s"
-      outboundNetwork: "1000000KiB/s"
+      inboundNetwork: "1GiB/s"
+      outboundNetwork: "1GiB/s"
     resources:
       requests:
         memory: 1Gi
