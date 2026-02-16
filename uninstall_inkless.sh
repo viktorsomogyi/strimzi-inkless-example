@@ -85,6 +85,9 @@ if [ "$REMOVE_LOAD_TEST" = true ]; then
   sed 's|__KAFKA_IMAGE__|unused|g' kafka-clients.yaml > "$TEMP_CLIENTS_FILE"
   kubectl delete -f "$TEMP_CLIENTS_FILE" -n kafka --ignore-not-found --timeout=60s 2>/dev/null || true
   rm -f "$TEMP_CLIENTS_FILE"
+  sed 's|__KAFKA_IMAGE__|unused|g' kafka-producer-ramp.yaml > "$TEMP_CLIENTS_FILE"
+  kubectl delete -f "$TEMP_CLIENTS_FILE" -n kafka --ignore-not-found --timeout=60s 2>/dev/null || true
+  rm -f "$TEMP_CLIENTS_FILE"
 fi
 
 # --- Optional: HTTPS (Grafana Ingress, ClusterIssuer, cert-manager) ---
@@ -96,6 +99,15 @@ if [ "$REMOVE_HTTPS" = true ]; then
 fi
 
 # --- Kafka resources (must be removed before Strimzi so the operator can tear down) ---
+echo "Stopping KafkaRebalance resources..."
+kubectl get kafkarebalance -n kafka -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | while read -r rb; do
+  if [ -n "$rb" ]; then
+    echo "Processing: $rb"
+    kubectl annotate kafkarebalance "$rb" strimzi.io/rebalance=stop --overwrite -n kafka
+    kubectl delete kafkarebalance "$rb" -n kafka --ignore-not-found --timeout=30s 2>/dev/null || true
+  fi
+done
+
 echo "Removing Kafka resources in kafka namespace..."
 TEMP_KAFKA_FILE=$(mktemp)
 sed 's|__KAFKA_IMAGE__|unused|g' kafka.yaml > "$TEMP_KAFKA_FILE"

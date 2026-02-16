@@ -13,7 +13,6 @@ spec:
   goals:
     - CpuCapacityGoal
     - NetworkInboundCapacityGoal
-    - DiskCapacityGoal
     - RackAwareGoal
     - MinTopicLeadersPerBrokerGoal
     - NetworkOutboundCapacityGoal
